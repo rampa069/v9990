@@ -1,0 +1,24 @@
+# Headless openMSX built from the current git master (the oracle for the
+# V9938 command engine follows master, see sim/v9938_cmd.py).
+#   docker build -t openmsx-master -f Dockerfile.master .
+FROM debian:trixie-slim AS build
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential git ca-certificates python3 tcl-dev libsdl2-dev libsdl2-ttf-dev \
+        libpng-dev zlib1g-dev libglew-dev libogg-dev libtheora-dev libvorbis-dev \
+        libasound2-dev libfreetype-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG OPENMSX_REF=master
+RUN git clone --depth 1 --branch ${OPENMSX_REF} https://github.com/openMSX/openMSX.git /src
+WORKDIR /src
+RUN ./configure && make -j"$(nproc)" && make install INSTALL_BASE=/opt/openMSX \
+    && git rev-parse HEAD > /opt/openMSX/REVISION
+
+FROM debian:trixie-slim
+# The Debian openmsx package only brings in the runtime libraries; the
+# master build in /usr/local/bin comes first in PATH.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openmsx xvfb xauth libgl1-mesa-dri libglx-mesa0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/openMSX /opt/openMSX
+RUN ln -s /opt/openMSX/bin/openmsx /usr/local/bin/openmsx
+WORKDIR /work
