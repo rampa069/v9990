@@ -93,15 +93,17 @@ architecture rtl of v9990_core is
    signal pal2_idx   : unsigned(5 downto 0);
    signal eo, scay_wr, scby_wr : std_logic;
 
-   -- VRAM clients: 0 CPU, 1 bitmap fetch, 2 pattern fetch.
+   -- VRAM clients: 0 CPU, 1 bitmap fetch, 2 pattern fetch, 3 sprites.
    signal c0_req, c0_we : std_logic;
    signal c0_be      : std_logic_vector(1 downto 0);
    signal c0_addr    : unsigned(17 downto 0);
    signal c0_wdata   : std_logic_vector(15 downto 0);
-   signal c1_req, c2_req : std_logic;
-   signal c1_addr, c2_addr : unsigned(17 downto 0);
-   signal gnt        : natural range 0 to 2 := 0;
-   signal ack0, ack1, ack2 : std_logic;
+   signal c1_req, c2_req, c3_req : std_logic;
+   signal c1_addr, c2_addr, c3_addr : unsigned(17 downto 0);
+   signal gnt        : natural range 0 to 3 := 0;
+   signal ack0, ack1, ack2, ack3 : std_logic;
+   signal spr_hit, spr_front : std_logic;
+   signal spr_idx    : unsigned(5 downto 0);
    signal pat_idx    : unsigned(5 downto 0);
    signal pat_fg     : std_logic;
 
@@ -189,16 +191,16 @@ begin
    -- VRAM arbiter: the grant moves, round robin, when the client being
    -- served is done (ack) or idle, so a transfer in progress is never cut.
    process (clk)
-      variable reqs : std_logic_vector(0 to 2);
+      variable reqs : std_logic_vector(0 to 3);
       variable cur  : std_logic;
    begin
       if rising_edge(clk) then
-         reqs := c0_req & c1_req & c2_req;
+         reqs := c0_req & c1_req & c2_req & c3_req;
          cur  := reqs(gnt);
          if vram_ack_i = '1' or cur = '0' then
-            for k in 1 to 2 loop
-               if reqs((gnt + k) mod 3) = '1' then
-                  gnt <= (gnt + k) mod 3;
+            for k in 1 to 3 loop
+               if reqs((gnt + k) mod 4) = '1' then
+                  gnt <= (gnt + k) mod 4;
                   exit;
                end if;
             end loop;
@@ -209,14 +211,15 @@ begin
       end if;
    end process;
 
-   vram_req_o   <= c0_req when gnt = 0 else c1_req when gnt = 1 else c2_req;
+   vram_req_o   <= c0_req when gnt = 0 else c1_req when gnt = 1 else c2_req when gnt = 2 else c3_req;
    vram_we_o    <= c0_we when gnt = 0 else '0';
    vram_be_o    <= c0_be when gnt = 0 else "11";
-   vram_addr_o  <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr;
+   vram_addr_o  <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr when gnt = 2 else c3_addr;
    vram_wdata_o <= c0_wdata;
    ack0         <= vram_ack_i when gnt = 0 else '0';
    ack1         <= vram_ack_i when gnt = 1 else '0';
    ack2         <= vram_ack_i when gnt = 2 else '0';
+   ack3         <= vram_ack_i when gnt = 3 else '0';
 
    inst_raster : entity work.v9990_raster
    port map (
@@ -304,6 +307,28 @@ begin
       pix_fg         => pat_fg
    );
 
+   inst_sprites : entity work.v9990_sprites
+   port map (
+      clk            => clk,
+      reset_n        => reset_n,
+      regs           => regs,
+      hcnt           => hcnt,
+      vcnt           => vcnt,
+      mode           => mode,
+      left           => left,
+      top            => top,
+      bottom         => bottom,
+      disp_en        => disp_en,
+      last_line      => last_line,
+      vram_req_o     => c3_req,
+      vram_addr_o    => c3_addr,
+      vram_ack_i     => ack3,
+      vram_rdata_i   => vram_rdata_i,
+      spr_hit        => spr_hit,
+      spr_front      => spr_front,
+      spr_idx        => spr_idx
+   );
+
    -- 1: color index or direct color.  Border: the backdrop color, black in
    -- the overscan modes; display area: the bitmap or the pattern layers.
    process (clk) begin if rising_edge(clk) then
@@ -318,7 +343,12 @@ begin
          p1.direct <= pix_direct;
          p1.hit    <= cur_hit;
       elsif disp = '1' then
-         idx1      <= pat_idx;
+         -- Front sprites over the layers, back ones over the background.
+         if spr_hit = '1' and (spr_front = '1' or pat_fg = '0') then
+            idx1 <= spr_idx;
+         else
+            idx1 <= pat_idx;
+         end if;
       end if;
       if is_overscan(mode) and disp = '0' then
          p1.black <= '1';

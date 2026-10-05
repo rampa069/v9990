@@ -432,6 +432,7 @@ class Pattern:
             ax = (regs[19] + 8 * regs[20]) & 1023
             px = self._layer(0x7C000, 0, ax, ay, 512, True)
             idx = [backdrop if c == 0 else (pal_b if odd else pal_a) + c for c, odd in px]
+            info = [1 if c else 0 for c, _ in px]
         else:
             ax = (regs[19] + 8 * regs[20]) & 511
             bx = (regs[23] + 8 * regs[24]) & 511
@@ -443,6 +444,7 @@ class Pattern:
             if display_y >= prio_y:
                 prio_x = 0
             idx = []
+            info = []
             for i in range(256):
                 (ca, _), (cb, _) = a[i], b[i]
                 if i < prio_x:      # B behind A
@@ -453,4 +455,49 @@ class Pattern:
                 if front[0]:
                     c = front[1] + front[0]
                 idx.append(c)
+                info.append(1 if front[0] else 0)
+        if not regs[8] & 0x40:
+            self._sprites(idx, info, display_y)
         return [pal_rgb(pal, i & 63) for i in idx]
+
+    def _sprites(self, idx, info, display_y):
+        """openMSX renderSprites: info 0 background, 1 front layer, 2 sprite."""
+        v, regs = self.vram, self.regs
+        width = len(idx)
+        table = 0x3FE00
+        visible = []
+        index_max = 16
+        for sp in range(125):
+            a = table + 4 * sp
+            if ((display_y - (v[a] + 1)) & 0xFF) < 16:
+                if v[a + 3] & 0x10:
+                    index_max -= 1
+                else:
+                    visible.append(sp)
+                if len(visible) == index_max:
+                    break
+        if self.p2:
+            pat_table = (regs[25] & 0x0F) << 15
+        else:
+            pat_table = (regs[25] & 0x0E) << 14
+        for sp in visible:
+            a = table + 4 * sp
+            attr = v[a + 3]
+            level = 2 if not attr & 0x20 else 1
+            sx = v[a + 2] + 256 * (attr & 3)
+            if sx > 1008:
+                sx -= 1024
+            no = v[a + 1]
+            line = (display_y - (v[a] + 1)) & 0xFF
+            if self.p2:
+                pa = pat_table + 256 * (((no & 0xE0) >> 1) + line) + 8 * (no & 0x1F)
+            else:
+                pa = pat_table + 128 * ((no & 0xF0) + line) + 8 * (no & 0x0F)
+            pal16 = (attr >> 2) & 0x30
+            for k in range(8):
+                d = v[vram_phys(pa + k, 0x80)] if self.p2 else v[pa + k]
+                for xx, c in ((sx + 2 * k, d >> 4), (sx + 2 * k + 1, d & 0x0F)):
+                    if 0 <= xx < width and c:
+                        if info[xx] < level:
+                            idx[xx] = pal16 + c
+                        info[xx] = 2

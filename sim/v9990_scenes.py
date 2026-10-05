@@ -89,3 +89,41 @@ SCENES.update({
     "p2": lambda: pattern("p2", 0x40, 0x0D, seed=34),
     "p2_scroll": lambda: pattern("p2_scroll", 0x40, 0x03, seed=35, r17=0x91, r18=0x81, r19=6, r20=0x55),
 })
+
+
+def sprites(name, r6, seed, r25, sprite_list, **kw):
+    """P1 / P2 layers with sprites: sprite_list of (number, y, x, pattern,
+    attr bits 7-4) for the first sprites, the rest moved off the lines."""
+    vram, regs, pal, mcs = pattern(name, r6, 0x06, seed=seed, **kw)
+    regs[8] = 0x80                                  # sprites on
+    regs[25] = r25
+    for sp in range(125):
+        a = 0x3FE00 + 4 * sp
+        vram[a] = 0xF0                              # line 0xF1: below the picture
+        vram[a + 3] = 0x00
+    for sp, y, x, no, attr in sprite_list:
+        a = 0x3FE00 + 4 * sp
+        vram[a], vram[a + 1], vram[a + 2] = y & 0xFF, no, x & 0xFF
+        vram[a + 3] = (attr & 0xF0) | ((x >> 8) & 3)
+    return vram, regs, pal, mcs
+
+
+def _sprite_list(seed, n, xmax):
+    rnd = random.Random(seed)
+    out = []
+    for k in range(n):
+        attr = rnd.choice((0x00, 0x40, 0x80, 0xC0, 0x20, 0x60))   # palettes, back (20h)
+        out.append((k, rnd.randrange(-8, 200), rnd.randrange(-16, xmax), rnd.randrange(256), attr))
+    return out
+
+
+SCENES.update({
+    "p1_sprites": lambda: sprites("p1_sprites", 0x00, 40, 0x02, _sprite_list(41, 40, 256)),
+    # 20 sprites on the same lines (16 per line), two disabled ones (10h)
+    # lowering the limit, negative x.
+    "p1_sprite_limit": lambda: sprites("p1_sprite_limit", 0x00, 42, 0x04,
+        [(k, 60 + (k % 3), 12 * k - 8, k, 0x40 if k % 2 else 0x00) for k in range(20)]
+        + [(30, 100, 50, 7, 0x10), (31, 101, 60, 8, 0x10)]
+        + [(32 + k, 100, 14 * k - 16, 9 + k, 0x80) for k in range(16)]),
+    "p2_sprites": lambda: sprites("p2_sprites", 0x40, 43, 0x05, _sprite_list(44, 40, 512)),
+})
