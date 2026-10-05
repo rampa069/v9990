@@ -76,8 +76,9 @@ def expected_shot(vram, regs, palette, mcs):
     display pixel per screenshot pixel, or two for B7, averaged)."""
     import v9990_oracle as oracle
     left, right, top, bottom, _ = vm.geometry(regs, mcs)
-    bm = vm.Bitmap(vram, regs, palette, mcs)
-    pclk = vm.PIXEL_CLOCKS[bm.mode]
+    mode = vm.display_mode(regs, mcs)
+    bm = vm.Pattern(vram, regs, palette) if mode in ("P1", "P2") else vm.Bitmap(vram, regs, palette, mcs)
+    pclk = vm.PIXEL_CLOCKS[mode]
     border = vm.pal_rgb(palette, regs[15] & 63)
     exp = np.zeros((240, 640, 3), dtype=np.float64)
     for k in range(240):

@@ -77,6 +77,7 @@ entity v9990_cpu is
       pal2_o         : out std_logic_vector(15 downto 0);
       eo_o           : out std_logic;         -- status EO
       scay_wr_o      : out std_logic;         -- R#17 written (vertical scroll A low)
+      scby_wr_o      : out std_logic;         -- R#21 written (vertical scroll B low)
 
       -- Raster and interrupt events.
       vr_i           : in  std_logic;         -- vertical border / blank
@@ -144,6 +145,7 @@ architecture rtl of v9990_cpu is
    signal dsp_r, dsp_g, dsp_b : byte_t := (others => '0');
    signal cur_r, cur_g, cur_b : byte_t := (others => '0');
    signal scay_wr    : std_logic := '0';
+   signal scby_wr    : std_logic := '0';
 
    signal waddr, raddr : unsigned(18 downto 0);
    signal vmap       : vmap_t;
@@ -220,6 +222,9 @@ begin
          if n = R_SCAY0 then
             scay_wr <= '1';
          end if;
+         if n = R_SCBY0 then
+            scby_wr <= '1';
+         end if;
       end procedure;
 
       impure function read_reg(n : natural) return byte_t is
@@ -255,6 +260,7 @@ begin
          cmd_start <= '0';
          pal_we    <= '0';
          scay_wr   <= '0';
+         scby_wr   <= '0';
 
          if req_i = '0' then
             req_seen <= '0';
@@ -440,6 +446,7 @@ begin
    srs_o        <= srs;
    eo_o         <= eo;
    scay_wr_o    <= scay_wr;
+   scby_wr_o    <= scby_wr;
    cmd_wr_o     <= cmd_wr;
    cmd_rd_o     <= cmd_rd;
    cmd_dbo_o    <= cmd_dbo;

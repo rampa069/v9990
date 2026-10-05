@@ -68,3 +68,24 @@ SCENES = {
     "b7_bp2": lambda: bitmap("b7_bp2", 0xA4, 0x06, seed=12),
     "cursors": cursors,
 }
+
+
+def pattern(name, r6, r13=0, seed=30, **kw):
+    """P1 / P2: random name tables and patterns, sprites off."""
+    vram = vm.power_on_vram()
+    rnd = random.Random(seed)
+    for a in range(0x80000):
+        vram[a] = rnd.randrange(256)
+    regs = _regs(r6, r13, **kw)
+    return vram, regs, _palette(seed + 100), False
+
+
+SCENES.update({
+    "p1": lambda: pattern("p1", 0x00, 0x09, seed=30),
+    "p1_scroll": lambda: pattern("p1_scroll", 0x00, 0x06, seed=31, r17=0x35, r18=0x01, r19=5, r20=0x13,
+                                 r21=0x77, r22=0x00, r23=3, r24=0x21),
+    "p1_prio": lambda: pattern("p1_prio", 0x00, 0x0C, seed=32, r27=0x0A),
+    "p1_roll": lambda: pattern("p1_roll", 0x00, 0x00, seed=33, r17=0xC0, r18=0x40),
+    "p2": lambda: pattern("p2", 0x40, 0x0D, seed=34),
+    "p2_scroll": lambda: pattern("p2_scroll", 0x40, 0x03, seed=35, r17=0x91, r18=0x81, r19=6, r20=0x55),
+})

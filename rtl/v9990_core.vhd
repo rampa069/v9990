@@ -91,17 +91,19 @@ architecture rtl of v9990_core is
    signal mcs, srs   : std_logic;
    signal pal, pal2  : std_logic_vector(15 downto 0);
    signal pal2_idx   : unsigned(5 downto 0);
-   signal eo, scay_wr: std_logic;
+   signal eo, scay_wr, scby_wr : std_logic;
 
-   -- VRAM clients: 0 CPU, 1 bitmap fetch.
+   -- VRAM clients: 0 CPU, 1 bitmap fetch, 2 pattern fetch.
    signal c0_req, c0_we : std_logic;
    signal c0_be      : std_logic_vector(1 downto 0);
    signal c0_addr    : unsigned(17 downto 0);
    signal c0_wdata   : std_logic_vector(15 downto 0);
-   signal c1_req     : std_logic;
-   signal c1_addr    : unsigned(17 downto 0);
-   signal gnt        : std_logic := '0';
-   signal ack0, ack1 : std_logic;
+   signal c1_req, c2_req : std_logic;
+   signal c1_addr, c2_addr : unsigned(17 downto 0);
+   signal gnt        : natural range 0 to 2 := 0;
+   signal ack0, ack1, ack2 : std_logic;
+   signal pat_idx    : unsigned(5 downto 0);
+   signal pat_fg     : std_logic;
 
    signal left       : unsigned(11 downto 0);
    signal top, bottom: unsigned(8 downto 0);
@@ -161,6 +163,7 @@ begin
       pal2_o         => pal2,
       eo_o           => eo,
       scay_wr_o      => scay_wr,
+      scby_wr_o      => scby_wr,
       vr_i           => vr,
       hr_i           => hr,
       frame_i        => frame,
@@ -183,30 +186,37 @@ begin
       vram_rdata_i   => vram_rdata_i
    );
 
-   -- VRAM arbiter: the grant moves when the client being served is done
-   -- (ack) or idle, so a transfer in progress is never cut.
-   process (clk) begin if rising_edge(clk) then
-      if gnt = '0' then
-         if (vram_ack_i = '1' or c0_req = '0') and c1_req = '1' then
-            gnt <= '1';
+   -- VRAM arbiter: the grant moves, round robin, when the client being
+   -- served is done (ack) or idle, so a transfer in progress is never cut.
+   process (clk)
+      variable reqs : std_logic_vector(0 to 2);
+      variable cur  : std_logic;
+   begin
+      if rising_edge(clk) then
+         reqs := c0_req & c1_req & c2_req;
+         cur  := reqs(gnt);
+         if vram_ack_i = '1' or cur = '0' then
+            for k in 1 to 2 loop
+               if reqs((gnt + k) mod 3) = '1' then
+                  gnt <= (gnt + k) mod 3;
+                  exit;
+               end if;
+            end loop;
          end if;
-      else
-         if (vram_ack_i = '1' or c1_req = '0') and c0_req = '1' then
-            gnt <= '0';
+         if reset_n = '0' then
+            gnt <= 0;
          end if;
       end if;
-      if reset_n = '0' then
-         gnt <= '0';
-      end if;
-   end if; end process;
+   end process;
 
-   vram_req_o   <= c0_req when gnt = '0' else c1_req;
-   vram_we_o    <= c0_we when gnt = '0' else '0';
-   vram_be_o    <= c0_be when gnt = '0' else "11";
-   vram_addr_o  <= c0_addr when gnt = '0' else c1_addr;
+   vram_req_o   <= c0_req when gnt = 0 else c1_req when gnt = 1 else c2_req;
+   vram_we_o    <= c0_we when gnt = 0 else '0';
+   vram_be_o    <= c0_be when gnt = 0 else "11";
+   vram_addr_o  <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr;
    vram_wdata_o <= c0_wdata;
-   ack0         <= vram_ack_i when gnt = '0' else '0';
-   ack1         <= vram_ack_i when gnt = '1' else '0';
+   ack0         <= vram_ack_i when gnt = 0 else '0';
+   ack1         <= vram_ack_i when gnt = 1 else '0';
+   ack2         <= vram_ack_i when gnt = 2 else '0';
 
    inst_raster : entity work.v9990_raster
    port map (
@@ -270,8 +280,32 @@ begin
       cur_color      => cur_color
    );
 
+   inst_pattern : entity work.v9990_pattern
+   port map (
+      clk            => clk,
+      reset_n        => reset_n,
+      regs           => regs,
+      hcnt           => hcnt,
+      vcnt           => vcnt,
+      mode           => mode,
+      left           => left,
+      top            => top,
+      bottom         => bottom,
+      disp_en        => disp_en,
+      last_line      => last_line,
+      frame          => frame,
+      scay_wr        => scay_wr,
+      scby_wr        => scby_wr,
+      vram_req_o     => c2_req,
+      vram_addr_o    => c2_addr,
+      vram_ack_i     => ack2,
+      vram_rdata_i   => vram_rdata_i,
+      pix_idx        => pat_idx,
+      pix_fg         => pat_fg
+   );
+
    -- 1: color index or direct color.  Border: the backdrop color, black in
-   -- the overscan modes; display area: the layers (bitmap modes for now).
+   -- the overscan modes; display area: the bitmap or the pattern layers.
    process (clk) begin if rising_edge(clk) then
       idx1      <= unsigned(regs(R_BACKDROP)(5 downto 0));
       p1.direct <= '0';
@@ -283,6 +317,8 @@ begin
          idx1      <= pix_idx;
          p1.direct <= pix_direct;
          p1.hit    <= cur_hit;
+      elsif disp = '1' then
+         idx1      <= pat_idx;
       end if;
       if is_overscan(mode) and disp = '0' then
          p1.black <= '1';

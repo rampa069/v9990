@@ -28,7 +28,9 @@ def expected_frame(vram, regs, palette, mcs=False, pal=False, eo=0, frame_regs=N
     # Picture: display area and border; overscan: the display area.
     vis_l, vis_r = (left, right) if os_ else (400, 400 + 2 * 112 + 2048)
     vis_t, vis_b = (top, bottom) if os_ else (15, 15 + 2 * (41 if pal else 14) + 212)
-    bm = vm.Bitmap(vram, regs, palette, mcs, eo=eo) if mode not in ("P1", "P2") and regs[8] & 0x80 else None
+    bm = None
+    if regs[8] & 0x80:
+        bm = vm.Pattern(vram, regs, palette) if mode in ("P1", "P2") else vm.Bitmap(vram, regs, palette, mcs, eo=eo)
     pclk = vm.PIXEL_CLOCKS[mode]
     for y in range(vis_t, vis_b):
         row = np.array([c8(c) for c in border])

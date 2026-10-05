@@ -384,3 +384,73 @@ class Bitmap:
                         colors[i] = colors[i] ^ 0x7FFF if xor else col
                         break
         return [grb15(c) for c in colors]
+
+
+# -- Pattern modes P1 / P2 (openMSX V9990P1Converter / V9990P2Converter) -----
+
+class Pattern:
+    """Renders the display area of P1 (two 256 pixel layers) and P2 (one 512
+    pixel layer), without the sprites: line(display_y) gives the (r, g, b)
+    of each pixel.  ya / yb: the layer lines (display_y unless R#17 / R#21
+    were written during the frame)."""
+
+    def __init__(self, vram, regs, palette):
+        self.vram, self.regs, self.palette = vram, regs, palette
+        self.p2 = (regs[6] & 0xC0) == 0x40
+        self.pixels = 512 if self.p2 else 256
+
+    def _layer(self, name_tab, pat_base, x, y, n, p2):
+        """n pixels of a layer from image x, line y: (nibble, odd byte)."""
+        v = self.vram
+        name_chars = 128 if p2 else 64
+        pat_chars = 64 if p2 else 32
+        pitch = pat_chars * 32
+        out = []
+        while len(out) < n:
+            name = name_tab + ((y // 8) * name_chars + (x // 8)) * 2
+            pn = (v[name] + 256 * v[name + 1]) & 0x1FFF
+            base = pat_base + (pn // pat_chars) * pitch + (y & 7) * name_chars * 2 + (pn % pat_chars) * 4
+            for k in range(x & 7, 8):
+                a = base + k // 2
+                d = v[vram_phys(a, 0x80)] if p2 else v[a]
+                out.append(((d >> 4) if k % 2 == 0 else (d & 0x0F), a & 1))
+            x = (x & ~7) + 8
+            x &= (1023 if p2 else 511)
+        return out[:n]
+
+    def line(self, display_y, ya=None, yb=None):
+        regs, pal = self.regs, self.palette
+        ya = display_y if ya is None else ya
+        yb = display_y if yb is None else yb
+        backdrop = regs[15] & 63
+        off = regs[13] & 0x0F
+        pal_a, pal_b = (off & 0x03) << 4, (off & 0x0C) << 2
+        roll = {0: 0x1FF, 1: 0xFF, 2: 0x1FF, 3: 0xFF}[regs[18] >> 6]
+        say = regs[17] + 256 * regs[18]
+        ay = (say & ~roll & 0x1FF) + ((ya + say) & roll)
+        if self.p2:
+            ax = (regs[19] + 8 * regs[20]) & 1023
+            px = self._layer(0x7C000, 0, ax, ay, 512, True)
+            idx = [backdrop if c == 0 else (pal_b if odd else pal_a) + c for c, odd in px]
+        else:
+            ax = (regs[19] + 8 * regs[20]) & 511
+            bx = (regs[23] + 8 * regs[24]) & 511
+            by = (yb + regs[21] + 256 * regs[22]) & 0x1FF
+            a = self._layer(0x7C000, 0x00000, ax, ay, 256, False)
+            b = self._layer(0x7E000, 0x40000, bx, by, 256, False)
+            prio_x = 256 if regs[27] & 3 == 0 else (regs[27] & 3) << 6
+            prio_y = 256 if regs[27] & 0x0C == 0 else (regs[27] & 0x0C) << 4
+            if display_y >= prio_y:
+                prio_x = 0
+            idx = []
+            for i in range(256):
+                (ca, _), (cb, _) = a[i], b[i]
+                if i < prio_x:      # B behind A
+                    back, front = (cb, pal_b), (ca, pal_a)
+                else:               # A behind B
+                    back, front = (ca, pal_a), (cb, pal_b)
+                c = backdrop if back[0] == 0 else back[1] + back[0]
+                if front[0]:
+                    c = front[1] + front[0]
+                idx.append(c)
+        return [pal_rgb(pal, i & 63) for i in idx]
