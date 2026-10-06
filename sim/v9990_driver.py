@@ -10,6 +10,7 @@ from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge, Time
 # OUT (n),A; 8 NOPs = 50 T-states of 12 clocks), so register changes that
 # take effect at the next line (R#6) line up with openMSX.
 GAP = 50 * 12
+CLK_PS = 23280                                  # 42.95 MHz
 
 
 class V9990:
@@ -49,7 +50,8 @@ class V9990:
             raise AssertionError(f"no ack for {'write' if wrt else 'read'} of port {port:02x}")
         await RisingEdge(self.clk)
         dut.req_i.value = 0
-        await ClockCycles(self.clk, GAP)
+        # One timer, not GAP clock edge callbacks (they pile up in NVC).
+        await Timer(GAP * CLK_PS, "ps")
         if not wrt:
             if not data.is_resolvable:
                 raise AssertionError(f"dbi has unresolved value {data}")
@@ -72,9 +74,28 @@ class V9990:
                     await self.write_port(op[1], v)
             elif op[0] == "in":
                 reads.append(await self.read_port(op[1]))
+            elif op[0] == "poll":
+                _, port, mask, val = op
+                for _ in range(3000):
+                    if (await self.read_port(port)) & mask == val:
+                        break
+                else:
+                    cmd = self.dut.inst_core.inst_cmd
+                    raise AssertionError(f"poll of port {port:02x} timed out; engine state {cmd.st.value} op {cmd.op.value} "
+                                         f"ANX {int(cmd.ANX.value)} ANY {int(cmd.ANY.value)} tr {cmd.tr.value}")
+            elif op[0] == "tr_out_p":
+                _, port, sport, data = op
+                for v in data:
+                    await self.run([("poll", sport, 0x80, 0x80)])
+                    await self.write_port(port, v)
+            elif op[0] == "tr_in_p":
+                _, port, sport, n = op
+                for _ in range(n):
+                    await self.run([("poll", sport, 0x80, 0x80)])
+                    reads.append(await self.read_port(port))
             elif op[0] == "delay":
                 # LD B,n; DJNZ $: 13 T-states (12 clocks each) per count.
-                await ClockCycles(self.clk, op[1] * 13 * 12)
+                await Timer(op[1] * 13 * 12 * CLK_PS, "ps")
         return reads
 
 

@@ -93,15 +93,24 @@ architecture rtl of v9990_core is
    signal pal2_idx   : unsigned(5 downto 0);
    signal eo, scay_wr, scby_wr : std_logic;
 
-   -- VRAM clients: 0 CPU, 1 bitmap fetch, 2 pattern fetch, 3 sprites.
+   -- VRAM clients: 0 CPU, 1 bitmap fetch, 2 pattern fetch, 3 sprites,
+   -- 4 command engine.
    signal c0_req, c0_we : std_logic;
    signal c0_be      : std_logic_vector(1 downto 0);
    signal c0_addr    : unsigned(17 downto 0);
    signal c0_wdata   : std_logic_vector(15 downto 0);
-   signal c1_req, c2_req, c3_req : std_logic;
-   signal c1_addr, c2_addr, c3_addr : unsigned(17 downto 0);
-   signal gnt        : natural range 0 to 3 := 0;
-   signal ack0, ack1, ack2, ack3 : std_logic;
+   signal c1_req, c2_req, c3_req, c4_req, c4_we : std_logic;
+   signal c1_addr, c2_addr, c3_addr, c4_addr : unsigned(17 downto 0);
+   signal c4_be      : std_logic_vector(1 downto 0);
+   signal c4_wdata   : std_logic_vector(15 downto 0);
+   signal gnt        : natural range 0 to 4 := 0;
+   signal ack0, ack1, ack2, ack3, ack4 : std_logic;
+   -- Command engine.
+   signal cmd_wr, cmd_rd, cmd_we, cmd_clear, cmd_irq : std_logic;
+   signal cmd_dbo, cmd_val, cmd_data : std_logic_vector(7 downto 0);
+   signal cmd_reg    : unsigned(4 downto 0);
+   signal cmd_status : std_logic_vector(7 downto 0);
+   signal border_x   : std_logic_vector(15 downto 0);
    signal spr_hit, spr_front : std_logic;
    signal spr_idx    : unsigned(5 downto 0);
    signal pat_idx    : unsigned(5 downto 0);
@@ -171,14 +180,18 @@ begin
       frame_i        => frame,
       irq_v_i        => irq_v,
       irq_h_i        => irq_h,
-      irq_ce_i       => '0',
-      cmd_status_i   => (others => '0'),
-      cmd_data_i     => (others => '0'),
-      border_x_i     => (others => '0'),
-      cmd_wr_o       => open,
-      cmd_rd_o       => open,
-      cmd_dbo_o      => open,
+      irq_ce_i       => cmd_irq,
+      cmd_status_i   => cmd_status,
+      cmd_data_i     => cmd_data,
+      border_x_i     => border_x,
+      cmd_wr_o       => cmd_wr,
+      cmd_rd_o       => cmd_rd,
+      cmd_dbo_o      => cmd_dbo,
       cmd_start_o    => open,
+      cmd_we_o       => cmd_we,
+      cmd_reg_o      => cmd_reg,
+      cmd_val_o      => cmd_val,
+      cmd_clear_o    => cmd_clear,
       vram_req_o     => c0_req,
       vram_we_o      => c0_we,
       vram_be_o      => c0_be,
@@ -191,16 +204,16 @@ begin
    -- VRAM arbiter: the grant moves, round robin, when the client being
    -- served is done (ack) or idle, so a transfer in progress is never cut.
    process (clk)
-      variable reqs : std_logic_vector(0 to 3);
+      variable reqs : std_logic_vector(0 to 4);
       variable cur  : std_logic;
    begin
       if rising_edge(clk) then
-         reqs := c0_req & c1_req & c2_req & c3_req;
+         reqs := c0_req & c1_req & c2_req & c3_req & c4_req;
          cur  := reqs(gnt);
          if vram_ack_i = '1' or cur = '0' then
-            for k in 1 to 3 loop
-               if reqs((gnt + k) mod 4) = '1' then
-                  gnt <= (gnt + k) mod 4;
+            for k in 1 to 4 loop
+               if reqs((gnt + k) mod 5) = '1' then
+                  gnt <= (gnt + k) mod 5;
                   exit;
                end if;
             end loop;
@@ -211,15 +224,44 @@ begin
       end if;
    end process;
 
-   vram_req_o   <= c0_req when gnt = 0 else c1_req when gnt = 1 else c2_req when gnt = 2 else c3_req;
-   vram_we_o    <= c0_we when gnt = 0 else '0';
-   vram_be_o    <= c0_be when gnt = 0 else "11";
-   vram_addr_o  <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr when gnt = 2 else c3_addr;
-   vram_wdata_o <= c0_wdata;
+   vram_req_o   <= c0_req when gnt = 0 else c1_req when gnt = 1 else c2_req when gnt = 2 else
+                   c3_req when gnt = 3 else c4_req;
+   vram_we_o    <= c0_we when gnt = 0 else c4_we when gnt = 4 else '0';
+   vram_be_o    <= c0_be when gnt = 0 else c4_be when gnt = 4 else "11";
+   vram_addr_o  <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr when gnt = 2 else
+                   c3_addr when gnt = 3 else c4_addr;
+   vram_wdata_o <= c4_wdata when gnt = 4 else c0_wdata;
    ack0         <= vram_ack_i when gnt = 0 else '0';
    ack1         <= vram_ack_i when gnt = 1 else '0';
    ack2         <= vram_ack_i when gnt = 2 else '0';
    ack3         <= vram_ack_i when gnt = 3 else '0';
+   ack4         <= vram_ack_i when gnt = 4 else '0';
+
+   inst_cmd : entity work.v9990_cmd
+   port map (
+      clk            => clk,
+      reset_n        => reset_n,
+      regs           => regs,
+      mode           => mode,
+      reg_we         => cmd_we,
+      reg_num        => cmd_reg,
+      reg_val        => cmd_val,
+      clear          => cmd_clear,
+      data_wr        => cmd_wr,
+      data_in        => cmd_dbo,
+      data_rd        => cmd_rd,
+      data_out       => cmd_data,
+      status_o       => cmd_status,
+      border_x_o     => border_x,
+      irq_o          => cmd_irq,
+      vram_req_o     => c4_req,
+      vram_we_o      => c4_we,
+      vram_be_o      => c4_be,
+      vram_addr_o    => c4_addr,
+      vram_wdata_o   => c4_wdata,
+      vram_ack_i     => ack4,
+      vram_rdata_i   => vram_rdata_i
+   );
 
    inst_raster : entity work.v9990_raster
    port map (

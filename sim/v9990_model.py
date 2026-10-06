@@ -48,6 +48,19 @@ def vram_phys(addr, scrmode0):
     return addr                         # P1 (and the invalid mode 11)
 
 
+def cmd_mode(regs):
+    """Command engine mode (openMSX V9990CmdEngine::setCommandMode) and the
+    image width."""
+    m = regs[6] & 0xC0
+    if m == 0x40:
+        name = "P2"
+    elif m == 0x80:
+        name = {"BP2": "BPP2", "BP4": "BPP4", "BD16": "BPP16"}.get(color_mode(regs), "BPP8")
+    else:
+        name = "P1"
+    return name, image_width(regs)
+
+
 class V9990:
     def __init__(self):
         self.vram = power_on_vram()
@@ -58,7 +71,16 @@ class V9990:
         self.pending = 0
         self.status = 0                 # bit 2 MCS, bit 1 EO
         self.system_reset = False
-        self.border_x = 0
+        import v9990_cmd
+        self.cmd = v9990_cmd.CmdEngine(self.vram, irq=self._cmd_irq)
+
+    def _cmd_irq(self):
+        self.pending |= 4
+
+    @property
+    def border_x(self):
+        self.cmd.sync()
+        return self.cmd.border_x
 
     # -- helpers ------------------------------------------------------------
 
@@ -78,6 +100,8 @@ class V9990:
             return
         if reg >= 32:
             self.regs[reg] = val        # command engine parameters
+            name, width = cmd_mode(self.regs)
+            self.cmd.set_reg(reg, val, name, width)
             return
         self.regs[reg] = val & MASK[reg]
         if reg == 5:
@@ -110,15 +134,17 @@ class V9990:
         elif port == P_PALETTE:
             result = self.palette[self.regs[14]]
         elif port == P_CMDDATA:
-            result = 0                  # command engine not modelled yet
+            result = None               # below: it has side effects in any case
         elif port == P_REGDATA:
             result = self.read_register(self.regsel & 0x3F)
         elif port == P_INTFLAG:
             result = self.pending
         elif port == P_STATUS:
-            result = self.status & 0x06
+            result = self.cmd.get_status() | (self.status & 0x06)
         else:
             result = 0xFF
+        if port == P_CMDDATA:
+            return self.cmd.get_data()
         if self.system_reset:
             return result
         if port == P_VRAM:
@@ -144,6 +170,8 @@ class V9990:
             self.vram[vram_phys(addr, self.regs[6])] = val
             if not self.regs[2] & 0x80:
                 self._set_addr(0, (addr + 1) & 0x7FFFF)
+        elif port == P_CMDDATA:
+            self.cmd.set_data(val)
         elif port == P_PALETTE:
             if self.system_reset:
                 self.write_palette(0, 0)

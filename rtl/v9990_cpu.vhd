@@ -95,6 +95,10 @@ entity v9990_cpu is
       cmd_rd_o       : out std_logic;         -- P#2 read
       cmd_dbo_o      : out std_logic_vector(7 downto 0);
       cmd_start_o    : out std_logic;         -- R#52 written
+      cmd_we_o       : out std_logic;         -- R#32-R#52 written: number, value
+      cmd_reg_o      : out unsigned(4 downto 0);
+      cmd_val_o      : out std_logic_vector(7 downto 0);
+      cmd_clear_o    : out std_logic;         -- SRS: all written with 0
 
       -- VRAM.
       vram_req_o     : out std_logic;
@@ -130,6 +134,9 @@ architecture rtl of v9990_cpu is
 
    signal cmd_wr, cmd_rd, cmd_start : std_logic := '0';
    signal cmd_dbo    : byte_t := (others => '0');
+   signal cmd_we, cmd_clear : std_logic := '0';
+   signal cmd_reg    : unsigned(4 downto 0) := (others => '0');
+   signal cmd_val    : byte_t := (others => '0');
 
    -- Palette: three 64 x 8 RAMs (R with Ys in bit 7, G, B), written by the
    -- CPU, read by the CPU (at R#14) and by the display.
@@ -212,6 +219,9 @@ begin
             regs(n) <= val and reg_mask(n);
          elsif n >= R_CMD_FIRST and n <= R_CMD_OP then
             regs(n) <= val;
+            cmd_we  <= '1';
+            cmd_reg <= to_unsigned(n - R_CMD_FIRST, 5);
+            cmd_val <= val;
             if n = R_CMD_OP then
                cmd_start <= '1';
             end if;
@@ -258,6 +268,8 @@ begin
          cmd_wr    <= '0';
          cmd_rd    <= '0';
          cmd_start <= '0';
+         cmd_we    <= '0';
+         cmd_clear <= '0';
          pal_we    <= '0';
          scay_wr   <= '0';
          scby_wr   <= '0';
@@ -355,6 +367,7 @@ begin
                            end if;
                         end loop;
                         cmd_start <= '1';
+                        cmd_clear <= '1';
                         prefetch  <= '1';      -- R#5 written
                         pending   <= (others => '0');
                      end if;
@@ -451,6 +464,10 @@ begin
    cmd_rd_o     <= cmd_rd;
    cmd_dbo_o    <= cmd_dbo;
    cmd_start_o  <= cmd_start;
+   cmd_we_o     <= cmd_we;
+   cmd_reg_o    <= cmd_reg;
+   cmd_val_o    <= cmd_val;
+   cmd_clear_o  <= cmd_clear;
 
    vram_req_o   <= vreq;
    vram_we_o    <= vwe;

@@ -38,6 +38,12 @@ def run_model(ops, after=None):
                 model.write(op[1], v)
         elif op[0] == "in":
             reads.append((op[1], model.read(op[1])))
+        elif op[0] == "tr_out_p":
+            for v in op[3]:
+                model.write(op[1], v)
+        elif op[0] == "tr_in_p":
+            for _ in range(op[3]):
+                reads.append((op[1], model.read(op[1])))
         # "delay": nothing to do
     return reads, model
 
@@ -54,10 +60,13 @@ def compare(reads, exp_reads, regs, palette, vram, model, who):
     assert not bad, f"VRAM: {len(bad)} bytes differ, first {bad[0]:05x}: {who} {vram[bad[0]]:02x} model {model.vram[bad[0]]:02x}"
 
 
-@pytest.mark.parametrize("seq", list(v9990_sequences.SEQUENCES))
+ALL_SEQUENCES = {**v9990_sequences.SEQUENCES, **v9990_sequences.SEQUENCES_CMD}
+
+
+@pytest.mark.parametrize("seq", list(ALL_SEQUENCES))
 def test_io(seq):
     import v9990_oracle as oracle
-    ops = v9990_sequences.SEQUENCES[seq]()
+    ops = ALL_SEQUENCES[seq]()
     o_reads, o_vram, o_regs, o_pal = oracle.run_io(ops)
     m_reads, model = run_model(ops)
     compare(o_reads, m_reads, o_regs, o_pal, o_vram, model, "openMSX")
