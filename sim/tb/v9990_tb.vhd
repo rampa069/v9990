@@ -18,7 +18,12 @@ use std.textio.all;
 
 entity v9990_tb is
    generic (
-      CAPTURE_DIR    : string := "."
+      CAPTURE_DIR    : string := ".";
+      -- VRAM timing of a slower memory (the SDRAM of a board): VRAM_LAT
+      -- clocks from the request to the ack (0: the block RAM, 1 clock),
+      -- VRAM_GAP clocks at least from the start of an access to the next.
+      VRAM_LAT       : natural := 0;
+      VRAM_GAP       : natural := 0
    );
    port (
       clk_o          : out std_logic;
@@ -71,6 +76,14 @@ architecture sim of v9990_tb is
    signal m_wdata    : std_logic_vector(15 downto 0);
    signal m_ack, c_ack : std_logic;
    signal vrdata     : std_logic_vector(15 downto 0);
+   -- The core's port after the slow memory model.
+   signal s_req, s_we, s_ack : std_logic := '0';
+   signal s_be       : std_logic_vector(1 downto 0) := "11";
+   signal s_addr     : unsigned(17 downto 0) := (others => '0');
+   signal s_wdata    : std_logic_vector(15 downto 0) := (others => '0');
+   signal s_rdata    : std_logic_vector(15 downto 0) := (others => '0');
+   signal core_ack   : std_logic;
+   signal core_rdata : std_logic_vector(15 downto 0);
 
    signal r, g, b    : std_logic_vector(7 downto 0);
    signal x          : unsigned(11 downto 0);
@@ -98,8 +111,8 @@ begin
       vram_be_o      => vbe,
       vram_addr_o    => vaddr,
       vram_wdata_o   => vwdata,
-      vram_ack_i     => c_ack,
-      vram_rdata_i   => vrdata,
+      vram_ack_i     => core_ack,
+      vram_rdata_i   => core_rdata,
       red_o          => r,
       grn_o          => g,
       blu_o          => b,
@@ -118,12 +131,55 @@ begin
    vid_x_o <= x;
    vid_y_o <= y;
 
-   m_req   <= l_req when loading = '1' else vreq;
-   m_we    <= '1' when loading = '1' else vwe;
-   m_be    <= "11" when loading = '1' else vbe;
-   m_addr  <= l_addr when loading = '1' else vaddr;
-   m_wdata <= l_data when loading = '1' else vwdata;
+   m_req   <= l_req when loading = '1' else vreq when VRAM_LAT = 0 else s_req;
+   m_we    <= '1' when loading = '1' else vwe when VRAM_LAT = 0 else s_we;
+   m_be    <= "11" when loading = '1' else vbe when VRAM_LAT = 0 else s_be;
+   m_addr  <= l_addr when loading = '1' else vaddr when VRAM_LAT = 0 else s_addr;
+   m_wdata <= l_data when loading = '1' else vwdata when VRAM_LAT = 0 else s_wdata;
    c_ack   <= m_ack when loading = '0' else '0';
+
+   core_ack   <= c_ack when VRAM_LAT = 0 else s_ack;
+   core_rdata <= vrdata when VRAM_LAT = 0 else s_rdata;
+
+   -- Slow memory model: the request is taken (at most one every VRAM_GAP
+   -- clocks), done in the block RAM after VRAM_LAT - 1 clocks and acked
+   -- with its data VRAM_LAT clocks after it was taken.
+   slow : process (clk)
+      variable busy : boolean := false;
+      variable cnt  : natural := 0;
+      variable gap  : natural := 0;
+   begin
+      if rising_edge(clk) then
+         s_ack <= '0';
+         if gap > 0 then
+            gap := gap - 1;
+         end if;
+         if s_req = '1' then
+            if c_ack = '1' then
+               s_req   <= '0';
+               s_rdata <= vrdata;
+               s_ack   <= '1';
+               busy    := false;
+            end if;
+         elsif busy then
+            cnt := cnt - 1;
+            if cnt = 0 then
+               s_req <= '1';
+            end if;
+         elsif vreq = '1' and s_ack = '0' and gap = 0 and loading = '0' and VRAM_LAT > 0 then
+            busy    := true;
+            gap     := VRAM_GAP;
+            s_we    <= vwe;
+            s_be    <= vbe;
+            s_addr  <= vaddr;
+            s_wdata <= vwdata;
+            cnt     := VRAM_LAT - 1;
+            if cnt = 0 then
+               s_req <= '1';
+            end if;
+         end if;
+      end if;
+   end process;
 
    inst_vram : entity work.v9990_vram_bram
    port map (

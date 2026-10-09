@@ -1,5 +1,6 @@
 """Build the V9990 simulation with NVC and run cocotb test modules."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -54,7 +55,11 @@ def test(runner, test_module, testcase=None):
         testcase=testcase,
         test_dir=SIM_DIR / "tests",
         build_dir=BUILD_DIR,
-        parameters={"CAPTURE_DIR": str(capture_dir)},
+        parameters={"CAPTURE_DIR": str(capture_dir),
+                    # VRAM timing of a slower memory (tb/v9990_tb.vhd), e.g.
+                    # V9990_VRAM_LAT=5 V9990_VRAM_GAP=3 for the SDRAM of ZEMMIX
+                    "VRAM_LAT": int(os.environ.get("V9990_VRAM_LAT", "0")),
+                    "VRAM_GAP": int(os.environ.get("V9990_VRAM_GAP", "0"))},
         extra_env={"V9990_CAPTURE_DIR": str(capture_dir)},
         # The IEEE packages warn about 'U' operands before reset.
         test_args=["--ieee-warnings=off"],
