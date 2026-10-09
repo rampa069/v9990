@@ -23,7 +23,11 @@ entity v9990_tb is
       -- clocks from the request to the ack (0: the block RAM, 1 clock),
       -- VRAM_GAP clocks at least from the start of an access to the next.
       VRAM_LAT       : natural := 0;
-      VRAM_GAP       : natural := 0
+      VRAM_GAP       : natural := 0;
+      -- VRAM_CACHE lines of v9990_vram_cache between the core and the slow
+      -- memory (0: none), which then reads lines of 4 words: VRAM_LAT
+      -- clocks from the request to the ack for a line too.
+      VRAM_CACHE     : natural := 0
    );
    port (
       clk_o          : out std_logic;
@@ -82,8 +86,17 @@ architecture sim of v9990_tb is
    signal s_addr     : unsigned(17 downto 0) := (others => '0');
    signal s_wdata    : std_logic_vector(15 downto 0) := (others => '0');
    signal s_rdata    : std_logic_vector(15 downto 0) := (others => '0');
+   signal s_line     : std_logic_vector(63 downto 0) := (others => '0');
    signal core_ack   : std_logic;
    signal core_rdata : std_logic_vector(15 downto 0);
+   -- The client of the slow memory: the core or the cache.
+   signal q_req, q_we, q_ack : std_logic;
+   signal q_be       : std_logic_vector(1 downto 0);
+   signal q_addr     : unsigned(17 downto 0);
+   signal q_wdata    : std_logic_vector(15 downto 0);
+   signal k_ack      : std_logic;
+   signal k_rdata    : std_logic_vector(15 downto 0);
+   signal k_reset_n  : std_logic;
 
    signal r, g, b    : std_logic_vector(7 downto 0);
    signal x          : unsigned(11 downto 0);
@@ -121,6 +134,7 @@ begin
       hblank_o       => hblank_o,
       vblank_o       => vblank_o,
       interlace_o    => open,
+      disp_en_o      => open,
       vid_x_o        => x,
       vid_y_o        => y
    );
@@ -138,43 +152,108 @@ begin
    m_wdata <= l_data when loading = '1' else vwdata when VRAM_LAT = 0 else s_wdata;
    c_ack   <= m_ack when loading = '0' else '0';
 
-   core_ack   <= c_ack when VRAM_LAT = 0 else s_ack;
-   core_rdata <= vrdata when VRAM_LAT = 0 else s_rdata;
+   core_ack   <= c_ack when VRAM_LAT = 0 else k_ack when VRAM_CACHE > 0 else s_ack;
+   core_rdata <= vrdata when VRAM_LAT = 0 else k_rdata when VRAM_CACHE > 0 else s_rdata;
+
+   g_cache : if VRAM_CACHE > 0 generate
+      -- The block RAM is loaded behind the cache: emptied meanwhile.
+      k_reset_n <= reset_n_i and not loading;
+
+      inst_cache : entity work.v9990_vram_cache
+      generic map (LINES => VRAM_CACHE)
+      port map (
+         clk      => clk,
+         reset_n  => k_reset_n,
+         req      => vreq,
+         we       => vwe,
+         be       => vbe,
+         addr     => vaddr,
+         wdata    => vwdata,
+         ack      => k_ack,
+         rdata    => k_rdata,
+         m_req    => q_req,
+         m_we     => q_we,
+         m_be     => q_be,
+         m_addr   => q_addr,
+         m_wdata  => q_wdata,
+         m_ack    => q_ack,
+         m_rdata  => s_line
+      );
+   end generate;
+
+   g_nocache : if VRAM_CACHE = 0 generate
+      q_req   <= vreq;
+      q_we    <= vwe;
+      q_be    <= vbe;
+      q_addr  <= vaddr;
+      q_wdata <= vwdata;
+   end generate;
+
+   q_ack <= s_ack;
 
    -- Slow memory model: the request is taken (at most one every VRAM_GAP
-   -- clocks), done in the block RAM after VRAM_LAT - 1 clocks and acked
-   -- with its data VRAM_LAT clocks after it was taken.
+   -- clocks), done in the block RAM and acked with its data VRAM_LAT
+   -- clocks after it was taken, or when the block RAM is done if that is
+   -- later.  A line is read from a copy of the block RAM (every write to
+   -- it is done in the copy too), all at once.
    slow : process (clk)
+      type copy_t is array (0 to 2**18 - 1) of std_logic_vector(15 downto 0);
+      variable copy : copy_t := (others => (others => '0'));
+      variable init : boolean := false;
       variable busy : boolean := false;
+      variable line : boolean := false;
       variable cnt  : natural := 0;
       variable gap  : natural := 0;
    begin
+      if not init then
+         -- as v9990_vram_bram at power on
+         for i in copy'range loop
+            if (i / 512) mod 2 = 1 then
+               copy(i) := x"FFFF";
+            end if;
+         end loop;
+         init := true;
+      end if;
       if rising_edge(clk) then
+         if m_req = '1' and m_we = '1' and m_ack = '0' then
+            if m_be(0) = '1' then
+               copy(to_integer(m_addr))(7 downto 0) := m_wdata(7 downto 0);
+            end if;
+            if m_be(1) = '1' then
+               copy(to_integer(m_addr))(15 downto 8) := m_wdata(15 downto 8);
+            end if;
+         end if;
          s_ack <= '0';
          if gap > 0 then
             gap := gap - 1;
          end if;
-         if s_req = '1' then
-            if c_ack = '1' then
-               s_req   <= '0';
-               s_rdata <= vrdata;
-               s_ack   <= '1';
-               busy    := false;
-            end if;
-         elsif busy then
+         if cnt > 0 then
             cnt := cnt - 1;
-            if cnt = 0 then
-               s_req <= '1';
+         end if;
+         if busy then
+            if s_req = '1' then
+               if c_ack = '1' then
+                  s_req   <= '0';
+                  s_rdata <= vrdata;
+               end if;
+            elsif cnt = 0 then
+               s_ack <= '1';
+               busy  := false;
             end if;
-         elsif vreq = '1' and s_ack = '0' and gap = 0 and loading = '0' and VRAM_LAT > 0 then
+         elsif q_req = '1' and s_ack = '0' and gap = 0 and loading = '0' and VRAM_LAT > 0 then
             busy    := true;
+            line    := VRAM_CACHE > 0 and q_we = '0';
             gap     := VRAM_GAP;
-            s_we    <= vwe;
-            s_be    <= vbe;
-            s_addr  <= vaddr;
-            s_wdata <= vwdata;
             cnt     := VRAM_LAT - 1;
-            if cnt = 0 then
+            s_we    <= q_we;
+            s_be    <= q_be;
+            s_addr  <= q_addr;
+            s_wdata <= q_wdata;
+            if line then
+               for i in 0 to 3 loop
+                  s_line(16 * i + 15 downto 16 * i) <= copy(to_integer(q_addr(17 downto 2) & to_unsigned(i, 2)));
+               end loop;
+            else
                s_req <= '1';
             end if;
          end if;

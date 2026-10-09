@@ -15,6 +15,7 @@ TOPLEVEL = "v9990_tb"
 RTL_SOURCES = [
     "v9990_pkg.vhd",
     "v9990_vram_bram.vhd",
+    "v9990_vram_cache.vhd",
     "v9990_cpu.vhd",
     "v9990_raster.vhd",
     "v9990_bitmap.vhd",
@@ -59,7 +60,9 @@ def test(runner, test_module, testcase=None):
                     # VRAM timing of a slower memory (tb/v9990_tb.vhd), e.g.
                     # V9990_VRAM_LAT=5 V9990_VRAM_GAP=3 for the SDRAM of ZEMMIX
                     "VRAM_LAT": int(os.environ.get("V9990_VRAM_LAT", "0")),
-                    "VRAM_GAP": int(os.environ.get("V9990_VRAM_GAP", "0"))},
+                    "VRAM_GAP": int(os.environ.get("V9990_VRAM_GAP", "0")),
+                    # V9990_VRAM_CACHE=4: v9990_vram_cache with 4 lines in front
+                    "VRAM_CACHE": int(os.environ.get("V9990_VRAM_CACHE", "0"))},
         extra_env={"V9990_CAPTURE_DIR": str(capture_dir)},
         # The IEEE packages warn about 'U' operands before reset.
         test_args=["--ieee-warnings=off"],

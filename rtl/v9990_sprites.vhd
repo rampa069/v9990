@@ -44,6 +44,13 @@
 -- line buffer (so the lower numbers overwrite the higher ones); the buffer
 -- of the shown line is cleared as it is read.  Pixel pipeline as in
 -- v9990_pattern.
+--
+-- The scan, the numbers and the X come from a copy of the attribute table
+-- in block RAM (bank 0 of 3FE00h-3FFFFh, 512 bytes), so only the patterns
+-- are read from the VRAM (one word at a time it was too slow for an
+-- SDRAM).  The copy takes the writes of the core to the table (snoop_*)
+-- and is read again from the VRAM at the start of each frame, for VRAM
+-- contents that did not come through the core.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -71,6 +78,12 @@ entity v9990_sprites is
       vram_addr_o  : out unsigned(17 downto 0);
       vram_ack_i   : in  std_logic;
       vram_rdata_i : in  std_logic_vector(15 downto 0);
+
+      -- Writes of the core to the attribute table (bank 0, word address
+      -- 3FE00h + snoop_addr).
+      snoop_we     : in  std_logic;
+      snoop_addr   : in  unsigned(8 downto 0);
+      snoop_data   : in  std_logic_vector(7 downto 0);
 
       -- Pixel.
       spr_hit      : out std_logic;
@@ -103,7 +116,16 @@ architecture rtl of v9990_sprites is
    signal cnt        : unsigned(4 downto 0) := (others => '0');
    signal imax       : unsigned(4 downto 0) := (others => '0');
 
-   type fstate_t is (F_IDLE, F_SETUP, F_SCANY, F_SCANA, F_NEXT, F_NO, F_X, F_PAT, F_DRAW);
+   -- Copy of the attribute table: sreq / s_ack / s_q as a VRAM read.
+   type sat_t is array (0 to 511) of std_logic_vector(7 downto 0);
+   signal sat        : sat_t := (others => (others => '0'));
+   signal sreq, s_ack: std_logic := '0';
+   signal s_q        : std_logic_vector(7 downto 0) := (others => '0');
+   signal sat_we, copy_wr : std_logic;
+   signal sat_wa     : unsigned(8 downto 0);
+   signal sat_wd     : std_logic_vector(7 downto 0);
+
+   type fstate_t is (F_IDLE, F_SETUP, F_SCANY, F_SCANA, F_NEXT, F_NO, F_X, F_PAT, F_DRAW, F_COPY);
    signal fs         : fstate_t := F_IDLE;
    signal freq       : std_logic := '0';
    signal faddr      : unsigned(17 downto 0) := (others => '0');
@@ -161,6 +183,21 @@ begin
       rd1 <= buf1(to_integer(r_addr));
    end if; end process;
 
+   -- Attribute table copy: written by the frame copy (F_COPY) or the
+   -- core, which never ack in the same clock.
+   copy_wr <= '1' when fs = F_COPY and vram_ack_i = '1' else '0';
+   sat_we  <= copy_wr or snoop_we;
+   sat_wa  <= faddr(8 downto 0) when copy_wr = '1' else snoop_addr;
+   sat_wd  <= vram_rdata_i(7 downto 0) when copy_wr = '1' else snoop_data;
+
+   process (clk) begin if rising_edge(clk) then
+      if sat_we = '1' then
+         sat(to_integer(sat_wa)) <= sat_wd;
+      end if;
+      s_q   <= sat(to_integer(faddr(8 downto 0)));
+      s_ack <= sreq and not s_ack;
+   end if; end process;
+
    ---------------------------------------------------------------------------
    -- Sprites of the next line.
    ---------------------------------------------------------------------------
@@ -181,8 +218,24 @@ begin
          case fs is
 
          when F_IDLE =>
-            if hcnt = 0 then
+            if hcnt = 0 and vcnt = 0 then
+               -- line 1 is never shown: its turn copies the table
+               faddr <= TABLE;
+               freq  <= '1';
+               fs    <= F_COPY;
+            elsif hcnt = 0 then
                fs <= F_SETUP;
+            end if;
+
+         when F_COPY =>
+            -- the 125 x 4 attribute bytes
+            if vram_ack_i = '1' then
+               if faddr(8 downto 0) = 499 then
+                  freq <= '0';
+                  fs   <= F_IDLE;
+               else
+                  faddr <= faddr + 1;
+               end if;
             end if;
 
          when F_SETUP =>
@@ -207,20 +260,20 @@ begin
                cnt   <= (others => '0');
                imax  <= to_unsigned(16, 5);
                faddr <= TABLE;
-               freq  <= '1';
+               sreq  <= '1';
                fs    <= F_SCANY;
             end if;
 
          when F_SCANY =>
             -- Y of sprite sp: on the line if (dy - (Y + 1)) mod 256 < 16.
-            if vram_ack_i = '1' then
-               y1   := unsigned(vram_rdata_i(7 downto 0)) + 1;
+            if s_ack = '1' then
+               y1   := unsigned(s_q) + 1;
                line := dy - y1;
-               freq <= '0';
+               sreq <= '0';
                if line < 16 then
                   ytmp  <= line(3 downto 0);
                   faddr <= TABLE + resize(sp & "11", 18);
-                  freq  <= '1';
+                  sreq  <= '1';
                   fs    <= F_SCANA;
                else
                   fs <= F_NEXT;
@@ -228,9 +281,9 @@ begin
             end if;
 
          when F_SCANA =>
-            if vram_ack_i = '1' then
-               freq <= '0';
-               attr := vram_rdata_i(7 downto 0);
+            if s_ack = '1' then
+               sreq <= '0';
+               attr := s_q;
                if attr(4) = '1' then
                   imax <= imax - 1;
                   if cnt = imax - 1 then
@@ -256,32 +309,32 @@ begin
             else
                sp    <= sp + 1;
                faddr <= TABLE + resize((sp + 1) & "00", 18);
-               freq  <= '1';
+               sreq  <= '1';
                fs    <= F_SCANY;
             end if;
 
          when F_NO =>
             -- Draw the list from the last entry: its number, then X.
-            if freq = '0' then
+            if sreq = '0' then
                if cnt = 0 then
                   fs <= F_IDLE;
                else
                   k     <= cnt - 1;
                   e     := list(to_integer(cnt(3 downto 0) - 1));
                   faddr <= TABLE + resize(unsigned(e(18 downto 12)) & "01", 18);
-                  freq  <= '1';
+                  sreq  <= '1';
                end if;
-            elsif vram_ack_i = '1' then
-               sno   <= unsigned(vram_rdata_i(7 downto 0));
+            elsif s_ack = '1' then
+               sno   <= unsigned(s_q);
                faddr <= faddr + 1;
                fs    <= F_X;
             end if;
 
          when F_X =>
-            if vram_ack_i = '1' then
+            if s_ack = '1' then
                e    := list(to_integer(k(3 downto 0)));
                attr := e(7 downto 0);
-               xx   := signed(std_logic_vector'("0" & attr(1 downto 0) & vram_rdata_i(7 downto 0)));
+               xx   := signed(std_logic_vector'("0" & attr(1 downto 0) & s_q));
                if xx > 1008 then
                   xx := xx - 1024;
                end if;
@@ -300,8 +353,10 @@ begin
                         + shift_left(resize(sno(3 downto 0), 19), 3);
                   faddr <= pa(17 downto 0);           -- physical, bank 0: 8 words
                end if;
-               pk <= (others => '0');
-               fs <= F_PAT;
+               pk   <= (others => '0');
+               sreq <= '0';
+               freq <= '1';
+               fs   <= F_PAT;
             end if;
 
          when F_PAT =>
@@ -343,7 +398,7 @@ begin
                   k     <= k - 1;
                   e     := list(to_integer(k(3 downto 0) - 1));
                   faddr <= TABLE + resize(unsigned(e(18 downto 12)) & "01", 18);
-                  freq  <= '1';
+                  sreq  <= '1';
                   fs    <= F_NO;
                end if;
             end if;
@@ -353,6 +408,7 @@ begin
          if reset_n = '0' then
             fs   <= F_IDLE;
             freq <= '0';
+            sreq <= '0';
          end if;
       end if;
    end process;

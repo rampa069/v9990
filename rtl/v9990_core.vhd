@@ -80,6 +80,7 @@ entity v9990_core is
       hblank_o       : out std_logic;
       vblank_o       : out std_logic;
       interlace_o    : out std_logic;
+      disp_en_o      : out std_logic;                -- R#8 DISP of this frame
       vid_x_o        : out unsigned(11 downto 0);
       vid_y_o        : out unsigned(8 downto 0)
    );
@@ -112,6 +113,11 @@ architecture rtl of v9990_core is
    signal cmd_status : std_logic_vector(7 downto 0);
    signal border_x   : std_logic_vector(15 downto 0);
    signal spr_hit, spr_front : std_logic;
+   signal snoop_we   : std_logic;
+   signal v_we       : std_logic;
+   signal v_be       : std_logic_vector(1 downto 0);
+   signal v_addr     : unsigned(17 downto 0);
+   signal v_wdata    : std_logic_vector(15 downto 0);
    signal spr_idx    : unsigned(5 downto 0);
    signal pat_idx    : unsigned(5 downto 0);
    signal pat_fg     : std_logic;
@@ -226,16 +232,25 @@ begin
 
    vram_req_o   <= c0_req when gnt = 0 else c1_req when gnt = 1 else c2_req when gnt = 2 else
                    c3_req when gnt = 3 else c4_req;
-   vram_we_o    <= c0_we when gnt = 0 else c4_we when gnt = 4 else '0';
-   vram_be_o    <= c0_be when gnt = 0 else c4_be when gnt = 4 else "11";
-   vram_addr_o  <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr when gnt = 2 else
+   v_we         <= c0_we when gnt = 0 else c4_we when gnt = 4 else '0';
+   v_be         <= c0_be when gnt = 0 else c4_be when gnt = 4 else "11";
+   v_addr       <= c0_addr when gnt = 0 else c1_addr when gnt = 1 else c2_addr when gnt = 2 else
                    c3_addr when gnt = 3 else c4_addr;
-   vram_wdata_o <= c4_wdata when gnt = 4 else c0_wdata;
+   v_wdata      <= c4_wdata when gnt = 4 else c0_wdata;
+   vram_we_o    <= v_we;
+   vram_be_o    <= v_be;
+   vram_addr_o  <= v_addr;
+   vram_wdata_o <= v_wdata;
    ack0         <= vram_ack_i when gnt = 0 else '0';
    ack1         <= vram_ack_i when gnt = 1 else '0';
    ack2         <= vram_ack_i when gnt = 2 else '0';
    ack3         <= vram_ack_i when gnt = 3 else '0';
    ack4         <= vram_ack_i when gnt = 4 else '0';
+
+   -- Writes to the sprite attribute table (bank 0 of 3FE00h-3FFFFh), for
+   -- its copy in v9990_sprites.
+   snoop_we <= '1' when vram_ack_i = '1' and v_we = '1' and v_be(0) = '1'
+                    and v_addr(17 downto 9) = "111111111" else '0';
 
    inst_cmd : entity work.v9990_cmd
    port map (
@@ -292,6 +307,7 @@ begin
    );
 
    interlace_o <= interlace;
+   disp_en_o   <= disp_en;
 
    inst_bitmap : entity work.v9990_bitmap
    port map (
@@ -366,6 +382,9 @@ begin
       vram_addr_o    => c3_addr,
       vram_ack_i     => ack3,
       vram_rdata_i   => vram_rdata_i,
+      snoop_we       => snoop_we,
+      snoop_addr     => v_addr(8 downto 0),
+      snoop_data     => v_wdata(7 downto 0),
       spr_hit        => spr_hit,
       spr_front      => spr_front,
       spr_idx        => spr_idx
