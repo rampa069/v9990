@@ -1,0 +1,19 @@
+# Python / simulación
+.venv/
+__pycache__/
+sim_build/
+work/
+results.xml
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Quartus
+db/
+incremental_db/
+output_files/
+*.qws
+
+# Ficheros temporales (ROMs, pruebas)
+tmp/

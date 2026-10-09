@@ -1,7 +1,7 @@
 """openMSX with the GFX9000 extension (V9990) as an oracle.
 
-Same setup as openmsx_oracle (Docker image on F18A_OPENMSX_HOST): the Z80
-runs a port sequence (openmsx_oracle.z80_program) from the H.TIMI hook, then
+Same setup as openmsx_host (Docker image on V9990_OPENMSX_HOST): the Z80
+runs a port sequence (openmsx_host.z80_program) from the H.TIMI hook, then
 the V9990 registers, palette and VRAM are dumped through the debugger.
 
     from v9990_oracle import run_io
@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from openmsx_oracle import HOST, IMAGE, PROG_ADDR, READS_ADDR, REMOTE_DIR, z80_program
+from openmsx_host import HOST, IMAGE, PROG_ADDR, READS_ADDR, REMOTE_DIR, z80_program
 
 DEVICE = "Sunrise GFX9000"
 

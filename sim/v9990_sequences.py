@@ -2,7 +2,7 @@
 the RTL (tests/test_v9990_io.py), both compared with v9990_model.
 
 Ops: ("out", port, value), ("in", port), ("block", port, data), ("delay",
-n) as in openmsx_oracle.z80_program; ports are 60h-6Fh.  A display mode
+n) as in openmsx_host.z80_program; ports are 60h-6Fh.  A display mode
 change (R#6) takes effect at the next line, so the sequences wait after it
 (MODE_DELAY) before using the new address mapping.
 """

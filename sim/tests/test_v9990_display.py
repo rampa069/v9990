@@ -61,7 +61,7 @@ async def check(dut, name, vram, regs, palette, mcs=False, pal=False):
     diff = np.any(got != exp, axis=2)
     if diff.any():
         from PIL import Image
-        out = os.environ.get("F18A_CAPTURE_DIR", ".")
+        out = os.environ.get("V9990_CAPTURE_DIR", ".")
         Image.fromarray(got[:, ::2].astype(np.uint8)).save(f"{out}/{name}_rtl.png")
         Image.fromarray(exp[:, ::2].astype(np.uint8)).save(f"{out}/{name}_model.png")
         ys, xs = np.nonzero(diff)

@@ -1,5 +1,5 @@
 --
--- V9990 (E-VDP-III) for the F18A project.
+-- V9990 (E-VDP-III) for FPGA retro computer cores.
 --
 -- Released under the 3-Clause BSD License:
 --

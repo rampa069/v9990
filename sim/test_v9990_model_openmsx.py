@@ -1,9 +1,9 @@
 """Check the V9990 reference model against openMSX (GFX9000 extension).
 
-Needs the openMSX oracle host (see openmsx_oracle.py); skipped unless
-F18A_OPENMSX=1:
+Needs the openMSX oracle host (see openmsx_host.py); skipped unless
+V9990_OPENMSX=1:
 
-    F18A_OPENMSX=1 ../.venv/bin/python -m pytest -v test_v9990_model_openmsx.py
+    V9990_OPENMSX=1 ../.venv/bin/python -m pytest -v test_v9990_model_openmsx.py
 """
 
 import os
@@ -13,8 +13,8 @@ import pytest
 import v9990_model as vm
 import v9990_sequences
 
-pytestmark = pytest.mark.skipif(os.environ.get("F18A_OPENMSX") != "1",
-                                reason="set F18A_OPENMSX=1 to run against openMSX")
+pytestmark = pytest.mark.skipif(os.environ.get("V9990_OPENMSX") != "1",
+                                reason="set V9990_OPENMSX=1 to run against openMSX")
 
 # Bits of a read that depend on its exact time, per port: P#5 VR / HR / EO,
 # P#6 the line and frame interrupt flags (not modelled yet).

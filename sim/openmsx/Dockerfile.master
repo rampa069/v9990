@@ -1,5 +1,5 @@
-# Headless openMSX built from the current git master (the oracle for the
-# V9938 command engine follows master, see sim/v9938_cmd.py).
+# Headless openMSX built from the current git master: the default oracle
+# image of sim/openmsx_host.py.
 #   docker build -t openmsx-master -f Dockerfile.master .
 FROM debian:trixie-slim AS build
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

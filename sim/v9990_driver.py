@@ -106,7 +106,7 @@ from pathlib import Path
 
 import numpy as np
 
-CAPTURE_DIR = Path(os.environ.get("F18A_CAPTURE_DIR", "."))
+CAPTURE_DIR = Path(os.environ.get("V9990_CAPTURE_DIR", "."))
 
 
 async def load_scene(v, vram, regs, palette, mcs=False):
