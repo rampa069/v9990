@@ -106,6 +106,8 @@ from pathlib import Path
 
 import numpy as np
 
+import v9990_model as vm
+
 CAPTURE_DIR = Path(os.environ.get("V9990_CAPTURE_DIR", "."))
 
 
@@ -152,3 +154,45 @@ async def capture_frame(v, step=1):
         data = np.loadtxt(f, dtype=np.int32)
     w = (2735 + step) // step
     return data.reshape(-1, w, 3)
+
+
+def c8(c):
+    return (c << 3) | (c >> 2)
+
+
+def expected_frame(vram, regs, palette, mcs=False, pal=False, eo=0, frame_regs=None):
+    """(lines, 2736, 3) 8-bit RGB the RTL should output."""
+    left, right, top, bottom, lines = vm.geometry(regs, mcs, pal)
+    mode = vm.display_mode(regs, mcs)
+    os_ = vm.is_overscan(regs, mcs)
+    border = (0, 0, 0) if os_ else vm.pal_rgb(palette, regs[15] & 63)
+    out = np.zeros((lines, vm.H_TOTAL, 3), dtype=np.int32)
+    # Picture: display area and border; overscan: the display area.
+    vis_l, vis_r = (left, right) if os_ else (400, 400 + 2 * 112 + 2048)
+    vis_t, vis_b = (top, bottom) if os_ else (15, 15 + 2 * (41 if pal else 14) + 212)
+    bm = None
+    if regs[8] & 0x80:
+        bm = vm.Pattern(vram, regs, palette) if mode in ("P1", "P2") else vm.Bitmap(vram, regs, palette, mcs, eo=eo)
+    pclk = vm.PIXEL_CLOCKS[mode]
+    for y in range(vis_t, vis_b):
+        row = np.array([c8(c) for c in border])
+        out[y, vis_l:vis_r] = row
+        if bm is not None and top <= y < bottom:
+            px = np.array([[c8(c) for c in p] for p in bm.line(y - top)])
+            out[y, left:right] = np.repeat(px, pclk, axis=0)[:right - left]
+    return out
+
+
+def compare_frames(name, got, exp):
+    """Assert a captured frame equals the expected one; if not, both go to
+    CAPTURE_DIR as <name>_rtl.png and <name>_model.png (every other clock)."""
+    assert got.shape == exp.shape, f"{name}: frame {got.shape}, expected {exp.shape}"
+    diff = np.any(got != exp, axis=2)
+    if diff.any():
+        from PIL import Image
+        Image.fromarray(got[:, ::2].astype(np.uint8)).save(CAPTURE_DIR / f"{name}_rtl.png")
+        Image.fromarray(exp[:, ::2].astype(np.uint8)).save(CAPTURE_DIR / f"{name}_model.png")
+        ys, xs = np.nonzero(diff)
+        y, x = ys[0], xs[0]
+        raise AssertionError(f"{name}: {diff.sum()} clocks differ, first line {y} clock {x}: "
+                             f"RTL {got[y, x]} model {exp[y, x]}")

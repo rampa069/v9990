@@ -108,6 +108,20 @@ def expected_shot(vram, regs, palette, mcs):
     return np.repeat(exp, 2, axis=0)
 
 
+def compare_shot(name, got, exp):
+    """Assert an openMSX screenshot matches the model's (within one level);
+    if not, both go to /tmp/v9990_<name>_openmsx.png and _model.png."""
+    diff = np.abs(got - exp).max(axis=2) > 1.0
+    if diff.any():
+        ys, xs = np.nonzero(diff)
+        from PIL import Image
+        Image.fromarray(got.astype(np.uint8)).save(f"/tmp/v9990_{name}_openmsx.png")
+        Image.fromarray(exp.astype(np.uint8)).save(f"/tmp/v9990_{name}_model.png")
+        y, x = ys[0], xs[0]
+        raise AssertionError(f"{name}: {diff.sum()} pixels differ, first at row {y} col {x}: "
+                             f"openMSX {got[y, x]} model {exp[y, x]}")
+
+
 @pytest.fixture(scope="module")
 def shots():
     import v9990_oracle as oracle
@@ -120,13 +134,27 @@ def shots():
 def test_scene(shots, name):
     vram, regs, pal, mcs = v9990_scenes.SCENES[name]()
     exp = expected_shot(vram, regs, pal, mcs)
-    got = shots[name]
-    diff = np.abs(got - exp).max(axis=2) > 1.0
-    if diff.any():
-        ys, xs = np.nonzero(diff)
-        from PIL import Image
-        Image.fromarray(got.astype(np.uint8)).save(f"/tmp/v9990_{name}_openmsx.png")
-        Image.fromarray(exp.astype(np.uint8)).save(f"/tmp/v9990_{name}_model.png")
-        y, x = ys[0], xs[0]
-        raise AssertionError(f"{name}: {diff.sum()} pixels differ, first at row {y} col {x}: "
-                             f"openMSX {got[y, x]} model {exp[y, x]}")
+    compare_shot(name, shots[name], exp)
+
+
+# -- Traces of real software ---------------------------------------------------
+
+import v9990_trace
+
+
+@pytest.fixture(scope="module")
+def trace_shots():
+    """openMSX showing the t1 state of each trace (loaded like a scene)."""
+    import v9990_oracle as oracle
+    oracle.dac()
+    states = {d.name: v9990_trace.load_state(d, "t1") for d in v9990_trace.traces()}
+    return states, oracle.run_scenes([oracle.Scene(f"trace_{n}", s.vram, s.regs[:29], s.palette)
+                                      for n, s in states.items()])
+
+
+@pytest.mark.parametrize("name", [d.name for d in v9990_trace.traces()])
+def test_trace(trace_shots, name):
+    states, shots = trace_shots
+    s = states[name]
+    exp = expected_shot(s.vram, s.regs, s.palette, False)
+    compare_shot(f"trace_{name}", shots[f"trace_{name}"], exp)

@@ -3,42 +3,13 @@ against openMSX in test_v9990_model_openmsx.py) and a few more (overscan
 modes, PAL, even / odd pages, display off), one frame each, compared clock
 by clock (8-bit RGB: the 5-bit levels expanded)."""
 
-import os
-
 import cocotb
 import numpy as np
 from cocotb.triggers import ClockCycles
 
 import v9990_model as vm
 import v9990_scenes
-from v9990_driver import V9990, capture_frame, load_scene
-
-
-def c8(c):
-    return (c << 3) | (c >> 2)
-
-
-def expected_frame(vram, regs, palette, mcs=False, pal=False, eo=0, frame_regs=None):
-    """(lines, 2736, 3) 8-bit RGB the RTL should output."""
-    left, right, top, bottom, lines = vm.geometry(regs, mcs, pal)
-    mode = vm.display_mode(regs, mcs)
-    os_ = vm.is_overscan(regs, mcs)
-    border = (0, 0, 0) if os_ else vm.pal_rgb(palette, regs[15] & 63)
-    out = np.zeros((lines, vm.H_TOTAL, 3), dtype=np.int32)
-    # Picture: display area and border; overscan: the display area.
-    vis_l, vis_r = (left, right) if os_ else (400, 400 + 2 * 112 + 2048)
-    vis_t, vis_b = (top, bottom) if os_ else (15, 15 + 2 * (41 if pal else 14) + 212)
-    bm = None
-    if regs[8] & 0x80:
-        bm = vm.Pattern(vram, regs, palette) if mode in ("P1", "P2") else vm.Bitmap(vram, regs, palette, mcs, eo=eo)
-    pclk = vm.PIXEL_CLOCKS[mode]
-    for y in range(vis_t, vis_b):
-        row = np.array([c8(c) for c in border])
-        out[y, vis_l:vis_r] = row
-        if bm is not None and top <= y < bottom:
-            px = np.array([[c8(c) for c in p] for p in bm.line(y - top)])
-            out[y, left:right] = np.repeat(px, pclk, axis=0)[:right - left]
-    return out
+from v9990_driver import V9990, capture_frame, compare_frames, expected_frame, load_scene
 
 
 async def check(dut, name, vram, regs, palette, mcs=False, pal=False):
@@ -57,17 +28,7 @@ async def check(dut, name, vram, regs, palette, mcs=False, pal=False):
         r[7] |= 0x08
     # EO flips at the start of the captured frame.
     exp = expected_frame(vram, r, palette, mcs, pal, eo ^ 1)
-    assert got.shape == exp.shape, f"{name}: frame {got.shape}, expected {exp.shape}"
-    diff = np.any(got != exp, axis=2)
-    if diff.any():
-        from PIL import Image
-        out = os.environ.get("V9990_CAPTURE_DIR", ".")
-        Image.fromarray(got[:, ::2].astype(np.uint8)).save(f"{out}/{name}_rtl.png")
-        Image.fromarray(exp[:, ::2].astype(np.uint8)).save(f"{out}/{name}_model.png")
-        ys, xs = np.nonzero(diff)
-        y, x = ys[0], xs[0]
-        raise AssertionError(f"{name}: {diff.sum()} clocks differ, first line {y} clock {x}: "
-                             f"RTL {got[y, x]} model {exp[y, x]}")
+    compare_frames(name, got, exp)
 
 
 def scene_test(name):
@@ -111,6 +72,13 @@ async def render_pal(dut):
 @cocotb.test()
 async def render_eo_pages(dut):
     await check(dut, "eo", *_extra("eo", 0x81, 0x00, r7=0x04))
+
+
+@cocotb.test()
+async def render_c25m(dut):
+    """R#7 C25M without HSCN (Ghosts'n Goblins title: R#6 86h, R#7 40h) is
+    plain B1, as in openMSX: no B5 / B6, same timing and picture."""
+    await check(dut, "c25m", *_extra("c25m", 0x86, 0x00, r7=0x40))
 
 
 @cocotb.test()

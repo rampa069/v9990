@@ -1,7 +1,9 @@
 """Traces of real software (v9990_trace.py, captured in openMSX): the RTL
 loaded with the state at t0 runs the port accesses of the trace, then its
 VRAM is compared with the model running the same accesses and with the
-openMSX state at t1.  Skipped when there are no traces (the game data stays
+openMSX state at t1, and one frame of the RTL with the model showing the t1
+state, sprites included (test_v9990_model_openmsx.py checks that picture
+against openMSX).  Skipped when there are no traces (the game data stays
 out of git)."""
 
 import time
@@ -9,7 +11,7 @@ import time
 import cocotb
 
 import v9990_trace as tr
-from v9990_driver import V9990, load_scene
+from v9990_driver import V9990, capture_frame, compare_frames, expected_frame, load_scene
 
 
 async def load_state(v, s):
@@ -47,6 +49,11 @@ async def check(dut, d):
     dut._log.info(f"{d.name}: {len(changed)} VRAM bytes changed, {len(addrs)} compared")
     assert not bad, f"{d.name}: {len(bad)} VRAM bytes differ: " + ", ".join(
         f"{p:05x} RTL {g:02x} model {m:02x} openMSX {o:02x}" for p, g, m, o in bad[:8])
+    for _ in range(2):
+        await capture_frame(v)                   # settle (display settings at frame start)
+    eo = (int(await v.read_port(0x65)) >> 1) & 1
+    got = await capture_frame(v)
+    compare_frames(f"trace_{d.name}", got, expected_frame(s1.vram, s1.regs, s1.palette, eo=eo ^ 1))
 
 
 def trace_test(d):

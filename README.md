@@ -17,7 +17,8 @@
     cursors, overscan, even / odd pages.
   * Pattern modes P1 and P2 with their sprites.
   * The command engine (blitter): every command in the six command modes.
-  * Not yet: B5 / B6 (640x400 / 640x480, 31 kHz), VRAM in SDRAM.
+  * Not yet: VRAM in SDRAM.  B5 / B6 (640x400 / 640x480, 31 kHz) are left
+    out: openMSX does not have them either (R#7 HSCN and C25M are ignored).
 
   The core (`rtl/v9990_core.vhd`) runs from a 42.95 MHz clock and keeps
   its 512 KB VRAM in block RAM (`rtl/v9990_vram_bram.vhd`).

@@ -36,7 +36,7 @@ Logs, results and captured frames go to `sim/sim_build/`
 | `tests/test_v9990_timing.py` | Line / frame timing (NTSC, PAL), display area and R#16, status VR / HR / EO, VI and HI interrupts, border color |
 | `tests/test_v9990_cmd.py` | Command engine against `v9990_cmd.py`: every command in the six command modes (P1, P2, 2 / 4 / 8 / 16 bpp), directions, logical operations with TP, write masks, CPU transfers, corner cases; reads, VRAM |
 | `v9990_trace.py`, `tests/test_v9990_trace.py`, `openmsx/capture.tcl` | Traces of real software captured in openMSX, replayed on the RTL and the model (below) |
-| `tests/test_v9990_display.py` | Bitmap modes against the model, one frame per scene compared clock by clock: B0-B4, B7, all color modes, scroll and roll, cursors, overscan, PAL, even / odd pages, display off, CPU writes during the display |
+| `tests/test_v9990_display.py` | Bitmap modes against the model, one frame per scene compared clock by clock: B0-B4, B7, all color modes, scroll and roll, cursors, overscan, PAL, even / odd pages, C25M without HSCN, display off, CPU writes during the display |
 
 ## Reference model and openMSX oracle
 
@@ -76,4 +76,7 @@ Copy `t0_*`, `t1_*` and `accesses.log` to `../tmp/traces/<name>/` (the
 game data stays out of git).  `tests/test_v9990_trace.py` loads t0 into
 the RTL, runs the accesses (waiting for CE = 0 before each command register
 write, as the game polls CE itself) and compares the VRAM with the model
-running the same accesses and with openMSX at t1.
+running the same accesses and with openMSX at t1, then one frame of the RTL
+with the model showing the t1 state (P1 sprites included).
+`test_v9990_model_openmsx.py::test_trace` loads the t1 state into openMSX
+like a display scene and checks that picture against its screenshot.
