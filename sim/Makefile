@@ -3,7 +3,7 @@
 PYTHON ?= ../.venv/bin/python
 T ?=
 
-.PHONY: setup test test-quick test-openmsx clean
+.PHONY: setup test test-quick test-trace test-openmsx clean
 
 setup:
 	python3 -m venv ../.venv
@@ -18,6 +18,10 @@ QUICK = test_v9990_io.py::io_basic test_v9990_timing.py::line_and_frame \
 
 test-quick:
 	V9990_QUICK="$(QUICK)" $(PYTHON) -m pytest -v test_v9990.py -k test_quick
+
+# Traces of real software in ../tmp/traces (see v9990_trace.py).
+test-trace:
+	$(PYTHON) -m pytest -v test_v9990.py -k "test_module and v9990_trace"
 
 # The reference model against openMSX (needs the oracle host, see openmsx_host.py).
 test-openmsx:
