@@ -45,8 +45,10 @@
 --
 -- During each line the next one is fetched into one half of a pixel line
 -- buffer (layer A: color and odd byte, layer B: color); the other half is
--- shown.  Pixel pipeline as in v9990_bitmap: pixel 0 starts at
--- hcnt = left - 3.  Output: palette index and whether a front layer
+-- shown.  The 8 pixels of a tile go to the buffer (one a clock) while the
+-- next tile is fetched, so a line of P1 (2 x 33 tiles) fits in the line
+-- with a slow VRAM (SDRAM behind v9990_vram_cache) and the sprites.
+-- Pixel pipeline as in v9990_bitmap: pixel 0 starts at hcnt = left - 3.  Output: palette index and whether a front layer
 -- pixel is there (fg, for the sprite priority).
 
 library ieee;
@@ -112,7 +114,7 @@ architecture rtl of v9990_pattern is
    signal nl, cl : line_t := NO_LINE;
 
    -- Fetch.
-   type fstate_t is (F_IDLE, F_SETUP, F_LAYER, F_NAME0, F_NAME1, F_PADDR, F_PAT, F_WRITE, F_NEXTL);
+   type fstate_t is (F_IDLE, F_SETUP, F_LAYER, F_NAME0, F_NAME1, F_PADDR, F_PAT, F_WRITE, F_DRAIN, F_NEXTL);
    signal fs        : fstate_t := F_IDLE;
    signal freq      : std_logic := '0';
    signal faddr     : unsigned(17 downto 0) := (others => '0');
@@ -128,7 +130,15 @@ architecture rtl of v9990_pattern is
    signal pn        : unsigned(12 downto 0) := (others => '0');
    signal pbyte     : byte_array(0 to 3) := (others => (others => '0'));
    signal pk        : natural range 0 to 3 := 0;
-   signal wk        : unsigned(2 downto 0) := (others => '0');
+   -- Pixel writer: the pattern bytes of a tile, written while the next
+   -- one is fetched (its own half, pixel and layer).
+   signal w_busy    : std_logic := '0';
+   signal w_bytes   : byte_array(0 to 3) := (others => (others => '0'));
+   signal w_k       : unsigned(2 downto 0) := (others => '0');
+   signal w_px      : unsigned(9 downto 0) := (others => '0');
+   signal w_end     : unsigned(9 downto 0) := (others => '0');
+   signal w_half    : std_logic := '0';
+   signal w_layer   : std_logic := '0';
    signal offa, offb: unsigned(8 downto 0) := (others => '0');
    signal scay_hi   : std_logic_vector(7 downto 0) := (others => '0');
    signal scby_hi   : std_logic := '0';
@@ -150,14 +160,14 @@ begin
 
    process (clk) begin if rising_edge(clk) then
       if wa_en = '1' then
-         buf_a(to_integer(half_w & w_addr(8 downto 0))) <= w_data;
+         buf_a(to_integer(w_half & w_addr(8 downto 0))) <= w_data;
       end if;
       rd_a <= buf_a(to_integer(r_addr));
    end if; end process;
 
    process (clk) begin if rising_edge(clk) then
       if wb_en = '1' then
-         buf_b(to_integer(half_w & w_addr(8 downto 0))) <= w_data(3 downto 0);
+         buf_b(to_integer(w_half & w_addr(8 downto 0))) <= w_data(3 downto 0);
       end if;
       rd_b <= buf_b(to_integer(r_addr));
    end if; end process;
@@ -179,6 +189,28 @@ begin
       if rising_edge(clk) then
          wa_en <= '0';
          wb_en <= '0';
+
+         -- Pixel writer: pixels w_k .. 7 of a tile (up to the line end).
+         if w_busy = '1' then
+            byte := w_bytes(to_integer(w_k(2 downto 1)));
+            if w_k(0) = '0' then
+               nib := byte(7 downto 4);
+            else
+               nib := byte(3 downto 0);
+            end if;
+            w_addr <= w_px;
+            w_data <= w_k(1) & nib;          -- odd byte of the 4: palette B (P2)
+            if w_layer = '0' then
+               wa_en <= '1';
+            else
+               wb_en <= '1';
+            end if;
+            w_k  <= w_k + 1;
+            w_px <= w_px + 1;
+            if w_k = 7 or w_px + 1 = w_end then
+               w_busy <= '0';
+            end if;
+         end if;
 
          if frame = '1' then
             offa    <= top;
@@ -326,7 +358,6 @@ begin
                   pbyte(pk + 1) <= vram_rdata_i(15 downto 8);
                   if pk = 2 then
                      freq <= '0';
-                     wk   <= kfirst;
                      fs   <= F_WRITE;
                   else
                      pk <= pk + 2;
@@ -339,7 +370,6 @@ begin
                   end if;
                   if pk = 3 then
                      freq <= '0';
-                     wk   <= kfirst;
                      fs   <= F_WRITE;
                   else
                      pk <= pk + 1;
@@ -348,34 +378,40 @@ begin
             end if;
 
          when F_WRITE =>
-            -- Pixels wk .. 7 of the tile to the line buffer.
-            byte := pbyte(to_integer(wk(2 downto 1)));
-            if wk(0) = '0' then
-               nib := byte(7 downto 4);
-            else
-               nib := byte(3 downto 0);
-            end if;
-            w_addr <= wpx;
-            w_data <= wk(1) & nib;           -- odd byte of the 4: palette B (P2)
-            if layer = '0' then
-               wa_en <= '1';
-            else
-               wb_en <= '1';
-            end if;
-            px := wpx + 1;
-            wpx <= px;
-            if (p2 = '1' and px = 512) or (p2 = '0' and px = 256) then
-               fs <= F_NEXTL;
-            elsif wk = 7 then
-               kfirst <= (others => '0');
+            -- Pixels kfirst .. 7 of the tile to the writer, when it is
+            -- done with the previous tile; the next tile is fetched
+            -- meanwhile.
+            if w_busy = '0' then
+               w_busy  <= '1';
+               w_bytes <= pbyte;
+               w_k     <= kfirst;
+               w_px    <= wpx;
+               w_half  <= half_w;
+               w_layer <= layer;
                if p2 = '1' then
-                  lx <= lx(9 downto 3) + 1 & "000";
+                  w_end <= to_unsigned(512, 10);
                else
-                  lx <= '0' & (lx(8 downto 3) + 1) & "000";
+                  w_end <= to_unsigned(256, 10);
                end if;
-               fs <= F_NAME0;
-            else
-               wk <= wk + 1;
+               px  := wpx + 8 - resize(kfirst, 10);
+               wpx <= px;
+               if (p2 = '1' and px >= 512) or (p2 = '0' and px >= 256) then
+                  fs <= F_DRAIN;
+               else
+                  kfirst <= (others => '0');
+                  if p2 = '1' then
+                     lx <= lx(9 downto 3) + 1 & "000";
+                  else
+                     lx <= '0' & (lx(8 downto 3) + 1) & "000";
+                  end if;
+                  fs <= F_NAME0;
+               end if;
+            end if;
+
+         when F_DRAIN =>
+            -- The last pixels of the layer written.
+            if w_busy = '0' then
+               fs <= F_NEXTL;
             end if;
 
          when F_NEXTL =>
@@ -388,8 +424,9 @@ begin
          end case;
 
          if reset_n = '0' then
-            fs   <= F_IDLE;
-            freq <= '0';
+            fs     <= F_IDLE;
+            freq   <= '0';
+            w_busy <= '0';
          end if;
       end if;
    end process;
