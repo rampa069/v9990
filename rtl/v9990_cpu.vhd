@@ -67,7 +67,7 @@ entity v9990_cpu is
       regs_o         : out byte_array(0 to 63);
       mcs_o          : out std_logic;         -- P#7 MCS: 14 MHz master clock
       srs_o          : out std_logic;         -- P#7 SRS: system reset state
-      mode_i         : in  dmode_t;           -- display mode (VRAM address mapping)
+      mode_i         : in  dmode_t;           -- display mode of the line (not used: the mapping follows R#6)
 
       -- Palette for the display: Ys & R & G & B (5 bits each), the clock
       -- after pal_idx_i.
@@ -122,6 +122,8 @@ architecture rtl of v9990_cpu is
    signal dbi_r      : byte_t := (others => '1');
    signal ack_r      : std_logic := '0';
    signal req_seen   : std_logic := '0';
+   signal dpend      : std_logic := '0';   -- P#2 accessed, the engine has not taken it yet
+   signal dwait      : std_logic;
    signal prefetch   : std_logic := '0';
 
    type state_t is (S_IDLE, S_WRITE, S_READ);
@@ -161,9 +163,11 @@ begin
 
    waddr <= unsigned(std_logic_vector'(regs(R_VWA0 + 2)(2 downto 0) & regs(R_VWA0 + 1) & regs(R_VWA0)));
    raddr <= unsigned(std_logic_vector'(regs(R_VRA0 + 2)(2 downto 0) & regs(R_VRA0 + 1) & regs(R_VRA0)));
-   -- The address mapping follows the display mode of the current line.
-   vmap  <= MAP_P1 when mode_i = DM_P1 else
-            MAP_P2 when mode_i = DM_P2 else
+   -- The address mapping follows R#6 / MCS at once (openMSX: the display
+   -- mode is recalculated on the register write), not the mode of the
+   -- current line: software sets R#6 and writes VRAM straight after.
+   vmap  <= MAP_P1 when dmode_of(regs(R_SCRMODE0), mcs) = DM_P1 else
+            MAP_P2 when dmode_of(regs(R_SCRMODE0), mcs) = DM_P2 else
             MAP_BX;
 
    -- Palette RAMs.
@@ -277,6 +281,9 @@ begin
          if req_i = '0' then
             req_seen <= '0';
          end if;
+         if cmd_status_i(7) = '0' then
+            dpend <= '0';
+         end if;
 
          if irq_v_i = '1' then pending(IRQ_V) <= '1'; end if;
          if irq_h_i = '1' then pending(IRQ_H) <= '1'; end if;
@@ -296,10 +303,13 @@ begin
                vreq  <= '1';
                state <= S_READ;
 
-            elsif req_i = '1' and req_seen = '0' then
+            elsif req_i = '1' and req_seen = '0' and dwait = '0' then
                req_seen <= '1';
                ack_r    <= '1';
                p := to_integer(unsigned(adr_i));
+               if p = P_CMDDATA then
+                  dpend <= '1';
+               end if;
                v := dbo_i;
                ptr := unsigned(regs(R_PALPTR));
 
@@ -444,12 +454,20 @@ begin
             rbuf     <= (others => '0');
             prefetch <= '0';
             req_seen <= '0';
+            dpend    <= '0';
             ack_r    <= '0';
             vreq     <= '0';
             state    <= S_IDLE;
          end if;
       end if;
    end process;
+
+   -- P#2 while a command runs (CE) and the engine is not ready for it (TR
+   -- 0, or still taking the previous byte): the host waits.  Software that
+   -- streams LMMC / CMMC data without polling TR (SymbOS G9K, its font
+   -- cache) would otherwise overwrite a byte the engine has not used.
+   dwait <= '1' when unsigned(adr_i) = P_CMDDATA and cmd_status_i(0) = '1' and
+                     (cmd_status_i(7) = '0' or dpend = '1') else '0';
 
    ack_o        <= ack_r;
    dbi_o        <= dbi_r;

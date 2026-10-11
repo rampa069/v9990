@@ -57,7 +57,7 @@ entity v9990_cmd is
       clk          : in  std_logic;
       reset_n      : in  std_logic;
       regs         : in  byte_array(0 to 63);
-      mode         : in  dmode_t;
+      mode         : in  dmode_t;                -- not used: the command mode follows R#6
 
       -- From the CPU interface.
       reg_we       : in  std_logic;              -- R#32-R#52 written
@@ -366,8 +366,11 @@ begin
                when 20 =>
                   op <= to_integer(unsigned(v(7 downto 4)));
                   ce <= '1';
-                  -- Command mode from the display mode and color depth.
-                  case mode is
+                  -- Command mode from R#6 (P1, P2 or bitmap and the color
+                  -- depth) as it is now, not the mode of the current line:
+                  -- SymbOS G9K sets R#6 and starts a command straight after.
+                  -- MCS only splits the bitmap modes, so '0' will do.
+                  case dmode_of(regs(R_SCRMODE0), '0') is
                      when DM_P1 => cm <= CM_P1; width <= to_unsigned(256, 12); wlog <= 8;
                      when DM_P2 => cm <= CM_P2; width <= to_unsigned(512, 12); wlog <= 9;
                      when others =>
