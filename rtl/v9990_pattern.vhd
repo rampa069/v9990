@@ -218,10 +218,15 @@ begin
             scay_hi <= regs(R_SCAY0 + 1);
             scby_hi <= regs(R_SCBY0 + 1)(0);
          else
-            if scay_wr = '1' and disp_en = '1' and vcnt >= top and vcnt < bottom then
+            -- A vertical scroll written during the display restarts the layer at
+            -- this line (openMSX: verified on a V9990), only with the line
+            -- interrupt on (R#9 IEH), as the raster splits do it: a write that is
+            -- just late (Ghosts'n Goblins: its vblank handler held off by the
+            -- ZEMMIX bus) waits for the next frame (ZEMMIX-kkd)
+            if scay_wr = '1' and disp_en = '1' and regs(R_INT0)(1) = '1' and vcnt >= top and vcnt < bottom then
                offa <= vcnt;
             end if;
-            if scby_wr = '1' and disp_en = '1' and vcnt >= top and vcnt < bottom then
+            if scby_wr = '1' and disp_en = '1' and regs(R_INT0)(1) = '1' and vcnt >= top and vcnt < bottom then
                offb <= vcnt;
             end if;
          end if;
