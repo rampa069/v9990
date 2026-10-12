@@ -3,7 +3,7 @@
 PYTHON ?= ../.venv/bin/python
 T ?=
 
-.PHONY: setup test test-quick test-trace test-openmsx clean
+.PHONY: setup test test-quick test-trace test-zemmix test-openmsx clean
 
 setup:
 	python3 -m venv ../.venv
@@ -22,6 +22,11 @@ test-quick:
 # Traces of real software in ../tmp/traces (see v9990_trace.py).
 test-trace:
 	$(PYTHON) -m pytest -v test_v9990.py -k "test_module and v9990_trace"
+
+# The host at the speed of a real CPU with the VRAM timing of ZEMMIX (SDRAM
+# behind the cache): R#6 then a command, P#2 data without polling TR.
+test-zemmix:
+	V9990_VRAM_LAT=7 V9990_VRAM_GAP=5 V9990_VRAM_CACHE=4 $(PYTHON) -m pytest -v test_v9990.py -k "test_module and v9990_host"
 
 # The reference model against openMSX (needs the oracle host, see openmsx_host.py).
 test-openmsx:

@@ -17,6 +17,7 @@ MODULES = [
     "test_v9990_display",
     "test_v9990_cmd",
     "test_v9990_trace",
+    "test_v9990_host",
 ]
 
 _built = {}

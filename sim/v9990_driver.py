@@ -17,6 +17,7 @@ class V9990:
     def __init__(self, dut):
         self.dut = dut
         self.clk = dut.clk_o
+        self.gap = GAP                      # clocks between host accesses (a real CPU: ~16-60)
 
     async def reset(self):
         dut = self.dut
@@ -51,7 +52,7 @@ class V9990:
         await RisingEdge(self.clk)
         dut.req_i.value = 0
         # One timer, not GAP clock edge callbacks (they pile up in NVC).
-        await Timer(GAP * CLK_PS, "ps")
+        await Timer(self.gap * CLK_PS, "ps")
         if not wrt:
             if not data.is_resolvable:
                 raise AssertionError(f"dbi has unresolved value {data}")
