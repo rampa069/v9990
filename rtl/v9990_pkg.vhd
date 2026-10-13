@@ -99,9 +99,11 @@ package v9990_pkg is
 
    -- Display modes (openMSX V9990DisplayMode): R#6 DSPM / DCKM and P#7 MCS.
    -- B0, B2, B4 are the overscan modes (MCS = 1: no border, 240 lines).
-   -- B5, B6 are the high scan modes (R#7 HSCN, V9990 Application Manual
-   -- 8.3): the B7 setting (bitmap, DCKM 2, MCS 0) with HSCN, B6 with C25M;
-   -- dmode_of gives B7 for them, hs_mode_of the high scan mode.
+   -- B5, B6 are the high scan modes (R#7 HSCN, V9990 Application Manual):
+   -- bitmap, MCS 0 and HSCN, B6 with C25M; DCKM 2 in the table of 8.3 but
+   -- 3 in the sample software of 15 (screen_table), both taken.  dmode_of
+   -- gives B7 / P1 (DCKM 3, invalid) for them, hs_mode_of the high scan
+   -- mode (the VRAM mapping and the commands follow it too).
    type dmode_t is (DM_P1, DM_P2, DM_B0, DM_B1, DM_B2, DM_B3, DM_B4, DM_B7, DM_B5, DM_B6);
    function dmode_of(scrmode0 : byte_t; mcs : std_logic) return dmode_t;
    function hs_mode_of(scrmode0, scrmode1 : byte_t; mcs : std_logic) return dmode_t;
@@ -217,7 +219,7 @@ package body v9990_pkg is
 
    function hs_mode_of(scrmode0, scrmode1 : byte_t; mcs : std_logic) return dmode_t is
    begin
-      if dmode_of(scrmode0, mcs) = DM_B7 and scrmode1(0) = '1' then
+      if scrmode0(7 downto 6) = "10" and scrmode0(5) = '1' and mcs = '0' and scrmode1(0) = '1' then
          if scrmode1(6) = '1' then
             return DM_B6;
          else

@@ -370,7 +370,7 @@ begin
                   -- depth) as it is now, not the mode of the current line:
                   -- SymbOS G9K sets R#6 and starts a command straight after.
                   -- MCS only splits the bitmap modes, so '0' will do.
-                  case dmode_of(regs(R_SCRMODE0), '0') is
+                  case hs_mode_of(regs(R_SCRMODE0), regs(R_SCRMODE1), '0') is
                      when DM_P1 => cm <= CM_P1; width <= to_unsigned(256, 12); wlog <= 8;
                      when DM_P2 => cm <= CM_P2; width <= to_unsigned(512, 12); wlog <= 9;
                      when others =>

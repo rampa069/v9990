@@ -96,6 +96,13 @@ async def render_b6(dut):
 
 
 @cocotb.test()
+async def render_b5_dckm3(dut):
+    """B5 with DCKM 3 as the sample software of the manual sets it (its
+    screen_table: R#6 B0h, R#7 01h); here 4 bpp, image 1024 wide."""
+    await check(dut, "b5_dckm3", *_extra("b5_dckm3", 0xB9, 0x04, r7=0x01))
+
+
+@cocotb.test()
 async def render_b6_cursors(dut):
     """The cursors on the uneven B6 pixels, 4 bpp."""
     vram, regs, pal, mcs = v9990_scenes.cursors()

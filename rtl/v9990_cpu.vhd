@@ -166,8 +166,8 @@ begin
    -- The address mapping follows R#6 / MCS at once (openMSX: the display
    -- mode is recalculated on the register write), not the mode of the
    -- current line: software sets R#6 and writes VRAM straight after.
-   vmap  <= MAP_P1 when dmode_of(regs(R_SCRMODE0), mcs) = DM_P1 else
-            MAP_P2 when dmode_of(regs(R_SCRMODE0), mcs) = DM_P2 else
+   vmap  <= MAP_P1 when hs_mode_of(regs(R_SCRMODE0), regs(R_SCRMODE1), mcs) = DM_P1 else
+            MAP_P2 when hs_mode_of(regs(R_SCRMODE0), regs(R_SCRMODE1), mcs) = DM_P2 else
             MAP_BX;
 
    -- Palette RAMs.

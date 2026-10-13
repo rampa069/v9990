@@ -81,6 +81,7 @@ entity v9990_core is
       vblank_o       : out std_logic;
       interlace_o    : out std_logic;
       disp_en_o      : out std_logic;                -- R#8 DISP of this frame
+      hscan_o        : out std_logic;                -- B5 / B6: 25 / 31 kHz lines (no scandoubler)
       vid_x_o        : out unsigned(11 downto 0);
       vid_y_o        : out unsigned(9 downto 0)
    );
@@ -308,6 +309,7 @@ begin
 
    interlace_o <= interlace;
    disp_en_o   <= disp_en;
+   hscan_o     <= '1' when is_highscan(mode) else '0';
 
    inst_bitmap : entity work.v9990_bitmap
    port map (

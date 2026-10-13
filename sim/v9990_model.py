@@ -284,10 +284,10 @@ def display_mode(regs, mcs=False):
         return "P2"
     if m == 0x80:
         n = (regs[6] >> 4) & 3
+        if n >= 2 and not mcs and regs[7] & 0x01:          # HSCN: DCKM 2 (8.3) or 3 (15)
+            return "B6" if regs[7] & 0x40 else "B5"
         if n == 3:
             return "P1"
-        if n == 2 and not mcs and regs[7] & 0x01:          # HSCN
-            return "B6" if regs[7] & 0x40 else "B5"
         return ("B0", "B2", "B4")[n] if mcs else ("B1", "B3", "B7")[n]
     return "P1"
 
