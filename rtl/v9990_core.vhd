@@ -133,6 +133,7 @@ architecture rtl of v9990_core is
 
    signal hcnt       : unsigned(11 downto 0);
    signal vcnt       : unsigned(9 downto 0);
+   signal vcnt9      : unsigned(8 downto 0);
    signal mode       : dmode_t;
    signal frame, irq_v, irq_h, hr, vr, disp : std_logic;
    signal hblank, vblank, hsync_n, vsync_n : std_logic;
@@ -343,14 +344,19 @@ begin
       cur_color      => cur_color
    );
 
-   -- P1 / P2 never use the high scan modes: up to 313 lines, 9 bits.
+   -- P1 / P2 never use the high scan modes: up to 313 lines, 9 bits.  From
+   -- line 512 (B6) they see line 511, never line 0: the sprites copy their
+   -- attribute table there (500 VRAM reads while the bitmap fetches the last
+   -- B6 line).
+   vcnt9 <= vcnt(8 downto 0) when vcnt(9) = '0' else (others => '1');
+
    inst_pattern : entity work.v9990_pattern
    port map (
       clk            => clk,
       reset_n        => reset_n,
       regs           => regs,
       hcnt           => hcnt,
-      vcnt           => vcnt(8 downto 0),
+      vcnt           => vcnt9,
       mode           => mode,
       left           => left,
       top            => top(8 downto 0),
@@ -374,7 +380,7 @@ begin
       reset_n        => reset_n,
       regs           => regs,
       hcnt           => hcnt,
-      vcnt           => vcnt(8 downto 0),
+      vcnt           => vcnt9,
       mode           => mode,
       left           => left,
       top            => top(8 downto 0),
