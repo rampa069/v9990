@@ -48,7 +48,7 @@ entity v9990_tb is
       hblank_o       : out std_logic;
       vblank_o       : out std_logic;
       vid_x_o        : out unsigned(11 downto 0);
-      vid_y_o        : out unsigned(8 downto 0);
+      vid_y_o        : out unsigned(9 downto 0);
 
       load_i         : in  std_logic;
       loading_o      : out std_logic;
@@ -100,7 +100,7 @@ architecture sim of v9990_tb is
 
    signal r, g, b    : std_logic_vector(7 downto 0);
    signal x          : unsigned(11 downto 0);
-   signal y          : unsigned(8 downto 0);
+   signal y          : unsigned(9 downto 0);
    signal frames     : integer := 0;
 
 begin

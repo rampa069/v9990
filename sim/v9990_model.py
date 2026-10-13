@@ -209,9 +209,33 @@ def is_overscan(regs, mcs):
     return (regs[6] & 0xC0) == 0x80 and mcs and (regs[6] & 0x30) != 0x30
 
 
+# High scan B5 / B6 (R#7 HSCN, not in openMSX): V9990 Application Manual
+# 13.3.12 / 13.3.13, in 42.95 MHz clocks (B6: 25.175 MHz dots, 640 in 1092
+# clocks); no border, PAL / interlace / EO / R#16 not used.
+# (line clocks, hsync, left, display clocks, lines, vsync, top, display lines)
+HIGH_SCAN = {"B5": (1696, 128, 288, 1280, 440, 8, 33, 400),
+             "B6": (1365, 164, 246, 1092, 525, 2, 35, 480)}
+
+
+def high_scan(regs, mcs=False):
+    """'B5' / 'B6' with R#7 HSCN on the B7 setting, else None."""
+    if display_mode(regs, mcs) in ("B5", "B6"):
+        return display_mode(regs, mcs)
+    return None
+
+
+def line_clocks(regs, mcs=False):
+    hs = high_scan(regs, mcs)
+    return HIGH_SCAN[hs][0] if hs else H_TOTAL
+
+
 def geometry(regs, mcs=False, pal=False):
     """(left, right, top, bottom, lines): the display area in clocks of the
     line and lines of the frame, and the lines per frame."""
+    hs = high_scan(regs, mcs)
+    if hs:
+        _, _, left, dx, lines, _, top, dy = HIGH_SCAN[hs]
+        return left, left + dx, top, top + dy, lines
     os_ = is_overscan(regs, mcs)
     adjx = ((regs[16] & 0x0F) ^ 7) - 8
     adjy = ((regs[16] >> 4) ^ 7) - 8
@@ -233,13 +257,23 @@ def hint_position(regs, mcs=False, pal=False):
     top = geometry(regs, mcs, pal)[2]
     line = regs[10] + 256 * (regs[11] & 3) + top
     off = (regs[12] & 0x0F) * 64 * (3 if mcs else 2)
-    return line + off // H_TOTAL, off % H_TOTAL
+    n = line_clocks(regs, mcs)
+    return line + off // n, off % n
 
 
 # -- Bitmap modes (openMSX V9990BitmapConverter, V9990SDLRasterizer) --------
 
 # Clocks per pixel and pixels per line, per display mode.
-PIXEL_CLOCKS = {"B0": 12, "B1": 8, "B2": 6, "B3": 4, "B4": 3, "B7": 2, "P1": 8, "P2": 4}
+# (B6: 273 / 160, see pixel_of_clock.)
+PIXEL_CLOCKS = {"B0": 12, "B1": 8, "B2": 6, "B3": 4, "B4": 3, "B7": 2, "B5": 2, "B6": 2,
+                "P1": 8, "P2": 4}
+
+
+def pixel_of_clock(mode, c):
+    """The pixel shown c clocks into the display area."""
+    if mode == "B6":
+        return c * 160 // 273
+    return c // PIXEL_CLOCKS[mode]
 MAP_RG = (0, 4, 9, 13, 18, 22, 27, 31)
 MAP_B = (0, 11, 21, 31)
 
@@ -252,6 +286,8 @@ def display_mode(regs, mcs=False):
         n = (regs[6] >> 4) & 3
         if n == 3:
             return "P1"
+        if n == 2 and not mcs and regs[7] & 0x01:          # HSCN
+            return "B6" if regs[7] & 0x40 else "B5"
         return ("B0", "B2", "B4")[n] if mcs else ("B1", "B3", "B7")[n]
     return "P1"
 
@@ -302,10 +338,16 @@ class Bitmap:
         self.mode = display_mode(regs, mcs)
         self.cmode = color_mode(regs)
         self.width = image_width(regs)
-        self.high_res = self.mode in ("B4", "B7")
-        self.pixels = (2304 if is_overscan(regs, mcs) else 2048) // PIXEL_CLOCKS[self.mode]
+        self.high_res = self.mode in ("B4", "B7", "B5", "B6")
+        self.high_scan = self.mode in ("B5", "B6")
+        if self.high_scan:
+            self.pixels = 640
+        else:
+            self.pixels = (2304 if is_overscan(regs, mcs) else 2048) // PIXEL_CLOCKS[self.mode]
         self.eo = eo
         self.interlace = bool(regs[7] & 0x02) if interlace is None else interlace
+        if self.high_scan:
+            self.interlace = False
         self.cursor_y_offset = 14 if is_overscan(regs, mcs) else 0   # NTSC
 
     def rd(self, addr):
@@ -395,7 +437,7 @@ class Bitmap:
         roll = {0: 0x1FFF, 1: 0xFF, 2: 0x1FF, 3: 0xFF}[regs[18] >> 6]
         ya = display_y
         dy = display_y
-        if regs[7] & 0x04:                     # even / odd pages
+        if regs[7] & 0x04 and not self.high_scan:   # even / odd pages
             ya = 2 * ya + self.eo
             dy += self.eo
         y = (scroll_y & ~roll & 0x1FFF) + ((ya + scroll_y) & roll)

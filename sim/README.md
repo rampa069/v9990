@@ -34,11 +34,11 @@ Logs, results and captured frames go to `sim/sim_build/`
 | `v9990_sequences.py` | Port sequences (`SEQUENCES_CMD` for the commands, run by the Z80 polling CE / TR) |
 | `v9990_scenes.py` | Display scenes |
 | `tests/test_v9990_io.py` | CPU interface (ports 60h-6Fh, registers, palette, VRAM pointers and mapping, system reset) against the model |
-| `tests/test_v9990_timing.py` | Line / frame timing (NTSC, PAL), display area and R#16, status VR / HR / EO, VI and HI interrupts, border color |
+| `tests/test_v9990_timing.py` | Line / frame timing (NTSC, PAL, B5 / B6), display area and R#16, status VR / HR / EO, VI and HI interrupts, border color |
 | `tests/test_v9990_cmd.py` | Command engine against `v9990_cmd.py`: every command in the six command modes (P1, P2, 2 / 4 / 8 / 16 bpp), directions, logical operations with TP, write masks, CPU transfers, corner cases; reads, VRAM |
 | `tests/test_v9990_host.py` | The host at the speed of a real CPU (a few clocks between accesses): R#6 then a command and VRAM writes at once, LMMC / CMMC data to P#2 without polling TR; VRAM against the model |
 | `v9990_trace.py`, `tests/test_v9990_trace.py`, `openmsx/capture.tcl` | Traces of real software captured in openMSX, replayed on the RTL and the model (below) |
-| `tests/test_v9990_display.py` | Bitmap modes against the model, one frame per scene compared clock by clock: B0-B4, B7, all color modes, scroll and roll, cursors, overscan, PAL, even / odd pages, C25M without HSCN, display off, CPU writes during the display |
+| `tests/test_v9990_display.py` | Bitmap modes against the model, one frame per scene compared clock by clock: B0-B4, B7, all color modes, scroll and roll, cursors, overscan, PAL, even / odd pages, C25M without HSCN, high scan B5 / B6 (model from the Application Manual, not openMSX), display off, CPU writes during the display |
 
 ## Reference model and openMSX oracle
 

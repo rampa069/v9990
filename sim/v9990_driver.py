@@ -137,9 +137,10 @@ async def load_scene(v, vram, regs, palette, mcs=False):
     await v.write_port(0x63, regs[8])
 
 
-async def capture_frame(v, step=1):
-    """The next whole frame: (lines, 2736 / step, 3) 8-bit RGB, sampled every
-    step clocks from clock 0 of each line."""
+async def capture_frame(v, step=1, line=2736):
+    """The next whole frame: (lines, line / step, 3) 8-bit RGB, sampled every
+    step clocks from clock 0 of each line (line: clocks per line, B5 / B6
+    shorter)."""
     dut = v.dut
     dut.cap_step_i.value = step
     start = int(dut.frames_o.value)
@@ -153,7 +154,7 @@ async def capture_frame(v, step=1):
     with open(path) as f:
         f.readline()
         data = np.loadtxt(f, dtype=np.int32)
-    w = (2735 + step) // step
+    w = (line - 1 + step) // step
     return data.reshape(-1, w, 3)
 
 
@@ -162,25 +163,25 @@ def c8(c):
 
 
 def expected_frame(vram, regs, palette, mcs=False, pal=False, eo=0, frame_regs=None):
-    """(lines, 2736, 3) 8-bit RGB the RTL should output."""
+    """(lines, line clocks, 3) 8-bit RGB the RTL should output."""
     left, right, top, bottom, lines = vm.geometry(regs, mcs, pal)
     mode = vm.display_mode(regs, mcs)
-    os_ = vm.is_overscan(regs, mcs)
+    os_ = vm.is_overscan(regs, mcs) or vm.high_scan(regs, mcs) is not None
     border = (0, 0, 0) if os_ else vm.pal_rgb(palette, regs[15] & 63)
-    out = np.zeros((lines, vm.H_TOTAL, 3), dtype=np.int32)
+    out = np.zeros((lines, vm.line_clocks(regs, mcs), 3), dtype=np.int32)
     # Picture: display area and border; overscan: the display area.
     vis_l, vis_r = (left, right) if os_ else (400, 400 + 2 * 112 + 2048)
     vis_t, vis_b = (top, bottom) if os_ else (15, 15 + 2 * (41 if pal else 14) + 212)
     bm = None
     if regs[8] & 0x80:
         bm = vm.Pattern(vram, regs, palette) if mode in ("P1", "P2") else vm.Bitmap(vram, regs, palette, mcs, eo=eo)
-    pclk = vm.PIXEL_CLOCKS[mode]
+    cols = np.array([vm.pixel_of_clock(mode, c) for c in range(right - left)])
     for y in range(vis_t, vis_b):
         row = np.array([c8(c) for c in border])
         out[y, vis_l:vis_r] = row
         if bm is not None and top <= y < bottom:
             px = np.array([[c8(c) for c in p] for p in bm.line(y - top)])
-            out[y, left:right] = np.repeat(px, pclk, axis=0)[:right - left]
+            out[y, left:right] = px[np.minimum(cols, len(px) - 1)]
     return out
 
 

@@ -17,8 +17,11 @@
     cursors, overscan, even / odd pages.
   * Pattern modes P1 and P2 with their sprites.
   * The command engine (blitter): every command in the six command modes.
-  * B5 / B6 (640x400 / 640x480, 31 kHz) are left out: openMSX does not
-    have them either (R#7 HSCN and C25M are ignored).
+  * High scan B5 / B6 (R#7 HSCN, C25M: 640x400 at 25 kHz, 640x480 at
+    31 kHz), not in openMSX: line and frame from the V9990 Application
+    Manual (13.3.12 / 13.3.13), B6 with 25.175 MHz dots on the 42.95 MHz
+    clock (640 pixels in 1092 clocks, 1 or 2 clocks each).  Not checked
+    against a real chip.
 
   The core (`rtl/v9990_core.vhd`) runs from a 42.95 MHz clock and keeps
   its 512 KB VRAM in block RAM (`rtl/v9990_vram_bram.vhd`), or in an SDRAM

@@ -39,7 +39,7 @@
 -- master clocks (XTAL1 21.48 MHz, MCLK 14.32 MHz): one line is 2736
 -- clocks, like the openMSX unified clock.
 --
--- Video: 15 kHz RGB, 5 bits per color from the palette (Ys in bit 15 of
+-- Video: 15 kHz RGB (B5 / B6: 25 / 31 kHz), 5 bits per color from the palette (Ys in bit 15 of
 -- the palette entry), expanded to 8 bits.  vid_x_o / vid_y_o are the
 -- raster position of the pixel on the RGB outputs (for the testbench).
 
@@ -82,7 +82,7 @@ entity v9990_core is
       interlace_o    : out std_logic;
       disp_en_o      : out std_logic;                -- R#8 DISP of this frame
       vid_x_o        : out unsigned(11 downto 0);
-      vid_y_o        : out unsigned(8 downto 0)
+      vid_y_o        : out unsigned(9 downto 0)
    );
 end v9990_core;
 
@@ -123,7 +123,7 @@ architecture rtl of v9990_core is
    signal pat_fg     : std_logic;
 
    signal left       : unsigned(11 downto 0);
-   signal top, bottom: unsigned(8 downto 0);
+   signal top, bottom: unsigned(9 downto 0);
    signal disp_en, pal_t, last_line, interlace : std_logic;
 
    signal pix_direct, cur_hit, cur_xor : std_logic;
@@ -131,7 +131,7 @@ architecture rtl of v9990_core is
    signal pix_rgb, cur_color : std_logic_vector(14 downto 0);
 
    signal hcnt       : unsigned(11 downto 0);
-   signal vcnt       : unsigned(8 downto 0);
+   signal vcnt       : unsigned(9 downto 0);
    signal mode       : dmode_t;
    signal frame, irq_v, irq_h, hr, vr, disp : std_logic;
    signal hblank, vblank, hsync_n, vsync_n : std_logic;
@@ -139,7 +139,7 @@ architecture rtl of v9990_core is
    -- Output pipeline: 1 color index, 2 palette, 3 RGB.
    type pipe_t is record
       x      : unsigned(11 downto 0);
-      y      : unsigned(8 downto 0);
+      y      : unsigned(9 downto 0);
       black  : std_logic;
       direct : std_logic;                       -- rgb instead of the palette
       rgb    : std_logic_vector(14 downto 0);
@@ -341,17 +341,18 @@ begin
       cur_color      => cur_color
    );
 
+   -- P1 / P2 never use the high scan modes: up to 313 lines, 9 bits.
    inst_pattern : entity work.v9990_pattern
    port map (
       clk            => clk,
       reset_n        => reset_n,
       regs           => regs,
       hcnt           => hcnt,
-      vcnt           => vcnt,
+      vcnt           => vcnt(8 downto 0),
       mode           => mode,
       left           => left,
-      top            => top,
-      bottom         => bottom,
+      top            => top(8 downto 0),
+      bottom         => bottom(8 downto 0),
       disp_en        => disp_en,
       last_line      => last_line,
       frame          => frame,
@@ -371,11 +372,11 @@ begin
       reset_n        => reset_n,
       regs           => regs,
       hcnt           => hcnt,
-      vcnt           => vcnt,
+      vcnt           => vcnt(8 downto 0),
       mode           => mode,
       left           => left,
-      top            => top,
-      bottom         => bottom,
+      top            => top(8 downto 0),
+      bottom         => bottom(8 downto 0),
       disp_en        => disp_en,
       last_line      => last_line,
       vram_req_o     => c3_req,

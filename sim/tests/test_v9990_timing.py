@@ -62,6 +62,31 @@ async def line_and_frame(dut):
     assert set(await edge_period(dut, dut.vsync_n_o, 2)) == {313 * vm.H_TOTAL}
 
 
+@cocotb.test()
+async def high_scan(dut):
+    """B5 / B6 (R#7 HSCN, C25M): line and frame of the Application Manual,
+    sync widths; back to 15 kHz without HSCN."""
+    v = V9990(dut)
+    await v.reset()
+    await set_regs(v, 6, [0xA9, 0x01])                  # B5
+    await wait_frame(dut)
+    await wait_frame(dut)
+    assert set(await edge_period(dut, dut.hsync_n_o)) == {1696}
+    assert set(await edge_period(dut, dut.vsync_n_o, 2)) == {440 * 1696}
+    await check_area(dut, [0, 0, 0, 0, 0, 0, 0xA9, 0x01] + [0] * 56)
+    await set_regs(v, 7, [0x41])                        # B6
+    await wait_frame(dut)
+    await wait_frame(dut)
+    assert set(await edge_period(dut, dut.hsync_n_o)) == {1365}
+    assert set(await edge_period(dut, dut.vsync_n_o, 2)) == {525 * 1365}
+    await check_area(dut, [0, 0, 0, 0, 0, 0, 0xA9, 0x41] + [0] * 56)
+    await set_regs(v, 7, [0x40])                        # C25M alone: B7, 15 kHz
+    await wait_frame(dut)
+    await wait_frame(dut)
+    assert set(await edge_period(dut, dut.hsync_n_o)) == {vm.H_TOTAL}
+    assert set(await edge_period(dut, dut.vsync_n_o, 2)) == {262 * vm.H_TOTAL}
+
+
 async def check_area(dut, regs, mcs=False, pal=False):
     """HR / VR of the raster against the model on a grid over a frame."""
     left, right, top, bottom, lines = vm.geometry(regs, mcs, pal)

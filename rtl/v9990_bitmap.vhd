@@ -32,7 +32,7 @@
 -- POSSIBILITY OF SUCH DAMAGE.
 
 
--- V9990 bitmap modes (B0-B4, B7): 2, 4, 8 bpp (64 color palette, 256
+-- V9990 bitmap modes (B0-B7): 2, 4, 8 bpp (64 color palette, 256
 -- direct colors, YJK, YUV) and 16 bpp, image width 256-2048, scroll with
 -- roll, even / odd pages and the two hardware cursors.  Like openMSX
 -- V9990BitmapConverter / V9990SDLRasterizer::drawBxMode (see
@@ -48,7 +48,8 @@
 -- (pix_direct = '0') or a direct color (R G B, 5 bits each), and the
 -- cursor on it (cur_hit; cur_xor: invert the color, else cur_color).
 -- Pipeline: A (pixel step, buffer address), B (buffer data), C (color);
--- pixel 0 starts in A at hcnt = left - 3.
+-- pixel 0 starts in A at hcnt = left - 3.  B6 (25.175 MHz dots) has 640
+-- pixels in 1092 clocks: pixel i from clock floor(i * 273 / 160).
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -63,11 +64,11 @@ entity v9990_bitmap is
 
       -- Raster.
       hcnt         : in  unsigned(11 downto 0);
-      vcnt         : in  unsigned(8 downto 0);
+      vcnt         : in  unsigned(9 downto 0);
       mode         : in  dmode_t;
       left         : in  unsigned(11 downto 0);
-      top          : in  unsigned(8 downto 0);
-      bottom       : in  unsigned(8 downto 0);
+      top          : in  unsigned(9 downto 0);
+      bottom       : in  unsigned(9 downto 0);
       disp_en      : in  std_logic;
       pal_t        : in  std_logic;
       last_line    : in  std_logic;
@@ -131,10 +132,11 @@ architecture rtl of v9990_bitmap is
       xodd   : std_logic;                  -- scroll x odd
       npx    : unsigned(10 downto 0);
       pclk   : unsigned(3 downto 0);
+      frac   : std_logic;                  -- B6: a pixel every 273 / 160 clocks
       cur    : cursors_t;
    end record;
    constant NO_LINE : line_t := ('0', C_BP4, "00", '0', "0000", "00000", '0',
-                                 (others => '0'), "1000", (NO_CURSOR, NO_CURSOR));
+                                 (others => '0'), "1000", '0', (NO_CURSOR, NO_CURSOR));
    signal nl, cl : line_t := NO_LINE;
 
    -- Fetch.
@@ -151,7 +153,7 @@ architecture rtl of v9990_bitmap is
    signal pat_hi    : std_logic_vector(15 downto 0) := (others => '0');
    signal dy_n      : unsigned(9 downto 0) := (others => '0');    -- display y of the next line
    signal half_w    : std_logic := '0';
-   signal offa      : unsigned(8 downto 0) := (others => '0');    -- line of layer A line 0
+   signal offa      : unsigned(9 downto 0) := (others => '0');    -- line of layer A line 0
    signal scay_hi   : unsigned(4 downto 0) := (others => '0');    -- R#18 of this frame
    signal pal2_idx  : unsigned(5 downto 0) := (others => '0');
    -- Setup pipeline.
@@ -166,6 +168,7 @@ architecture rtl of v9990_bitmap is
    signal active    : std_logic := '0';
    signal half_r    : std_logic := '0';
    signal pc        : unsigned(3 downto 0) := (others => '0');
+   signal acc       : unsigned(8 downto 0) := (others => '0');    -- B6 pixel phase
    signal pos       : unsigned(14 downto 0) := (others => '0');   -- bit in the line buffer
    signal ipx       : unsigned(10 downto 0) := (others => '0');
    signal a_valid, b_valid : std_logic := '0';
@@ -226,7 +229,7 @@ begin
    -- Fetch of the next line.
    ---------------------------------------------------------------------------
    process (clk)
-      variable n      : unsigned(8 downto 0);
+      variable n      : unsigned(9 downto 0);
       variable ya     : unsigned(9 downto 0);
       variable dy     : unsigned(9 downto 0);
       variable sy     : unsigned(12 downto 0);
@@ -278,7 +281,7 @@ begin
                -- Display line (cursors) and layer A line, even / odd pages.
                dy := resize(n - top, 10);
                ya := resize(n - offa, 10);
-               if regs(R_SCRMODE1)(2) = '1' then
+               if regs(R_SCRMODE1)(2) = '1' and not is_highscan(mode) then
                   ya := ya(8 downto 0) & eo;
                   dy := dy + ("000000000" & eo);
                end if;
@@ -308,13 +311,18 @@ begin
                nl.cmode  <= m;
                nl.bpp    <= to_unsigned(b, 2);
                nl.paloff <= unsigned(regs(R_PALCTRL)(3 downto 0));
-               if mode = DM_B4 or mode = DM_B7 then
+               if mode = DM_B4 or mode = DM_B7 or is_highscan(mode) then
                   nl.hires <= '1';
                else
                   nl.hires <= '0';
                end if;
                nl.npx  <= to_unsigned(pixels(mode), 11);
                nl.pclk <= to_unsigned(pixel_clocks(mode), 4);
+               if mode = DM_B6 then
+                  nl.frac <= '1';
+               else
+                  nl.frac <= '0';
+               end if;
                nl.xodd <= sx(0);
                s_y    <= y;
                s_sx   <= sx;
@@ -477,9 +485,12 @@ begin
    -- Display of the current line.
    ---------------------------------------------------------------------------
 
-   -- Stage A: a new pixel every pclk clocks; buffer address.
+   -- Stage A: a new pixel every pclk clocks (B6: when the phase passes
+   -- 273); buffer address.
    process (clk)
-      variable np : unsigned(14 downto 0);
+      variable np  : unsigned(14 downto 0);
+      variable na  : unsigned(8 downto 0);
+      variable nxt : boolean;
    begin
       if rising_edge(clk) then
          a_valid <= '0';
@@ -490,6 +501,7 @@ begin
          elsif hcnt = left - 3 and cl.show = '1' then
             active    <= '1';
             pc        <= cl.pclk - 1;
+            acc       <= (others => '0');
             pos       <= resize(cl.bitoff, 15);
             ipx       <= (others => '0');
             buf_raddr <= half_r & "0000000000";
@@ -497,11 +509,23 @@ begin
             a_bit     <= cl.bitoff;
             a_i       <= (others => '0');
          elsif active = '1' then
-            if pc /= 0 then
-               pc <= pc - 1;
-            elsif ipx = cl.npx - 1 then
-               active <= '0';
+            if cl.frac = '1' then
+               na  := acc + 160;
+               nxt := na >= 273;
+               if nxt then
+                  acc <= na - 273;
+               else
+                  acc <= na;
+               end if;
             else
+               nxt := pc = 0;
+               if not nxt then
+                  pc <= pc - 1;
+               end if;
+            end if;
+            if nxt and ipx = cl.npx - 1 then
+               active <= '0';
+            elsif nxt then
                case cl.bpp is
                   when "00"   => np := pos + 2;
                   when "01"   => np := pos + 4;

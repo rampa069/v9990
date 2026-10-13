@@ -1,7 +1,7 @@
 """V9990 display against the model: the scenes of v9990_scenes.py (checked
 against openMSX in test_v9990_model_openmsx.py) and a few more (overscan
-modes, PAL, even / odd pages, display off), one frame each, compared clock
-by clock (8-bit RGB: the 5-bit levels expanded)."""
+modes, PAL, even / odd pages, display off, high scan B5 / B6), one frame
+each, compared clock by clock (8-bit RGB: the 5-bit levels expanded)."""
 
 import cocotb
 import numpy as np
@@ -19,13 +19,14 @@ async def check(dut, name, vram, regs, palette, mcs=False, pal=False):
     if pal:
         await v.write_port(0x64, 7)
         await v.write_port(0x63, regs[7] | 0x08)
-    for _ in range(2):
-        await capture_frame(v)                   # settle (R#18, PAL, display at frame start)
-    eo = (int(await v.read_port(0x65)) >> 1) & 1
-    got = await capture_frame(v)
     r = list(regs)
     if pal:
         r[7] |= 0x08
+    line = vm.line_clocks(r, mcs)
+    for _ in range(2):
+        await capture_frame(v, line=line)        # settle (R#18, PAL, display at frame start)
+    eo = (int(await v.read_port(0x65)) >> 1) & 1
+    got = await capture_frame(v, line=line)
     # EO flips at the start of the captured frame.
     exp = expected_frame(vram, r, palette, mcs, pal, eo ^ 1)
     compare_frames(name, got, exp)
@@ -79,6 +80,27 @@ async def render_c25m(dut):
     """R#7 C25M without HSCN (Ghosts'n Goblins title: R#6 86h, R#7 40h) is
     plain B1, as in openMSX: no B5 / B6, same timing and picture."""
     await check(dut, "c25m", *_extra("c25m", 0x86, 0x00, r7=0x40))
+
+
+@cocotb.test()
+async def render_b5(dut):
+    """B5 (R#7 HSCN): 640 x 400, 4 bpp, image 1024 wide, x / y scroll."""
+    await check(dut, "b5", *_extra("b5", 0xA9, 0x04, r7=0x01, r17=0x21, r19=3, r20=0x05))
+
+
+@cocotb.test()
+async def render_b6(dut):
+    """B6 (R#7 HSCN, C25M): 640 x 480 at 25.175 MHz dots, 2 bpp, image 2048
+    wide; EO (invalid in B6) set."""
+    await check(dut, "b6", *_extra("b6", 0xAC, 0x05, r7=0x45, r19=1, r20=0x10))
+
+
+@cocotb.test()
+async def render_b6_cursors(dut):
+    """The cursors on the uneven B6 pixels, 4 bpp."""
+    vram, regs, pal, mcs = v9990_scenes.cursors()
+    regs[6], regs[7] = 0xA9, 0x41
+    await check(dut, "b6_cursors", vram, regs, pal, mcs)
 
 
 @cocotb.test()

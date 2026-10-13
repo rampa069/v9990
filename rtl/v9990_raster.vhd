@@ -47,6 +47,12 @@
 -- PAL, interlace and display enable (R#8 DISP) are taken at the start of
 -- the frame.
 --
+-- High scan (R#7 HSCN, B5 / B6, not in openMSX): the line and the frame of
+-- the V9990 Application Manual (see v9990_pkg), no border, no PAL /
+-- interlace (R#7 PAL, EO, IL are invalid there) and the display area not
+-- moved by R#16 (the right erase of B6 is 27 clocks).  The mode is taken
+-- at the start of the frame and kept for all its lines.
+--
 -- Interrupts: VI at the first line after the display area; HI at line
 -- R#10 + 256 * R#11 (from the top of the display area), every line with
 -- R#11 bit 7, R#12 * 64 master clocks into the line.
@@ -64,7 +70,7 @@ entity v9990_raster is
       mcs         : in  std_logic;
 
       hcnt_o      : out unsigned(11 downto 0);    -- 0 .. 2735
-      vcnt_o      : out unsigned(8 downto 0);     -- 0 .. 261 / 312
+      vcnt_o      : out unsigned(9 downto 0);     -- 0 .. 261 / 312 (B5 439, B6 524)
       mode_o      : out dmode_t;                  -- display mode of this line
       frame_o     : out std_logic;                -- first clock of a frame
       irq_v_o     : out std_logic;
@@ -73,8 +79,8 @@ entity v9990_raster is
       vr_o        : out std_logic;                -- status VR: outside the display lines
       disp_o      : out std_logic;                -- display area and display enabled
       left_o      : out unsigned(11 downto 0);    -- first clock of the display area
-      top_o       : out unsigned(8 downto 0);     -- first line of the display area
-      bottom_o    : out unsigned(8 downto 0);     -- first line after it
+      top_o       : out unsigned(9 downto 0);     -- first line of the display area
+      bottom_o    : out unsigned(9 downto 0);     -- first line after it
       disp_en_o   : out std_logic;                -- R#8 DISP of this frame
       pal_o       : out std_logic;                -- PAL timing of this frame
       last_line_o : out std_logic;                -- the last line of the frame
@@ -89,7 +95,7 @@ end v9990_raster;
 architecture rtl of v9990_raster is
 
    signal hcnt      : unsigned(11 downto 0) := (others => '0');
-   signal vcnt      : unsigned(8 downto 0) := (others => '0');
+   signal vcnt      : unsigned(9 downto 0) := (others => '0');
    signal mode      : dmode_t := DM_P1;
    signal pal_f     : std_logic := '0';     -- frame settings
    signal il_f      : std_logic := '0';
@@ -97,12 +103,27 @@ architecture rtl of v9990_raster is
    signal os_f      : boolean := false;
 
    signal left, right : unsigned(11 downto 0);
-   signal top, bottom : unsigned(8 downto 0);
+   signal top, bottom : unsigned(9 downto 0);
+   signal line_len    : unsigned(11 downto 0);
+   signal sync_len    : unsigned(11 downto 0);
+   signal last_line   : boolean;
    signal hr, vr      : std_logic;
    signal hl_line     : unsigned(10 downto 0);
    signal hl_x        : unsigned(11 downto 0);
 
 begin
+
+   -- Line and frame of the mode.
+   line_len  <= to_unsigned(H_TOTAL_B5, 12) when mode = DM_B5 else
+                to_unsigned(H_TOTAL_B6, 12) when mode = DM_B6 else
+                to_unsigned(H_TOTAL, 12);
+   sync_len  <= to_unsigned(H_SYNC_B5, 12) when mode = DM_B5 else
+                to_unsigned(H_SYNC_B6, 12) when mode = DM_B6 else
+                to_unsigned(200, 12);
+   last_line <= vcnt = V_TOTAL_B5 - 1 when mode = DM_B5 else
+                vcnt = V_TOTAL_B6 - 1 when mode = DM_B6 else
+                vcnt = 312 when pal_f = '1' else
+                vcnt = 261;
 
    -- Display area.
    process (mode, regs)
@@ -110,7 +131,13 @@ begin
       variable l   : integer;
    begin
       adj := signed('0' & (regs(R_DISPADJ)(3 downto 0) xor "0111")) - 8;
-      if is_overscan(mode) then
+      if mode = DM_B5 then
+         l := H_LEFT_B5;
+         right <= to_unsigned(l + H_DISPLAY_B5, 12);
+      elsif mode = DM_B6 then
+         l := H_LEFT_B6;
+         right <= to_unsigned(l + H_DISPLAY_B6, 12);
+      elsif is_overscan(mode) then
          l := H_BLANK_OS + to_integer(adj) * 8;
          right <= to_unsigned(l + H_DISPLAY_OS, 12);
       else
@@ -120,17 +147,23 @@ begin
       left <= to_unsigned(l, 12);
    end process;
 
-   process (os_f, pal_f, regs)
+   process (mode, os_f, pal_f, regs)
       variable adj : signed(4 downto 0);
       variable t   : integer;
    begin
       adj := signed('0' & (regs(R_DISPADJ)(7 downto 4) xor "0111")) - 8;
-      if os_f then
+      if mode = DM_B5 then
+         t := V_TOP_B5;
+         bottom <= to_unsigned(t + V_DISPLAY_B5, 10);
+      elsif mode = DM_B6 then
+         t := V_TOP_B6;
+         bottom <= to_unsigned(t + V_DISPLAY_B6, 10);
+      elsif os_f then
          t := V_BLANK + to_integer(adj);
          if pal_f = '1' then
-            bottom <= to_unsigned(t + V_DISPLAY_OS_PAL, 9);
+            bottom <= to_unsigned(t + V_DISPLAY_OS_PAL, 10);
          else
-            bottom <= to_unsigned(t + V_DISPLAY_OS_NTSC, 9);
+            bottom <= to_unsigned(t + V_DISPLAY_OS_NTSC, 10);
          end if;
       else
          if pal_f = '1' then
@@ -138,14 +171,14 @@ begin
          else
             t := V_BLANK + V_BORDER_NTSC + to_integer(adj);
          end if;
-         bottom <= to_unsigned(t + V_DISPLAY, 9);
+         bottom <= to_unsigned(t + V_DISPLAY, 10);
       end if;
-      top <= to_unsigned(t, 9);
+      top <= to_unsigned(t, 10);
    end process;
 
    -- Line interrupt position: line and clock, the offset (up to 2880
-   -- clocks) carried into the next line.
-   process (regs, mcs, top)
+   -- clocks) carried into the next line (B5 / B6: up to two lines).
+   process (regs, mcs, top, line_len)
       variable off  : unsigned(11 downto 0);
       variable line : unsigned(10 downto 0);
    begin
@@ -155,10 +188,12 @@ begin
          off := resize(resize(unsigned(regs(R_INT3)(3 downto 0)), 12) * 128, 12);
       end if;
       line := unsigned(std_logic_vector'(regs(R_INT2)(1 downto 0) & regs(R_INT1))) + resize(top, 11);
-      if off >= H_TOTAL then
-         off  := off - H_TOTAL;
-         line := line + 1;
-      end if;
+      for k in 1 to 2 loop
+         if off >= line_len then
+            off  := off - line_len;
+            line := line + 1;
+         end if;
+      end loop;
       hl_x    <= off;
       hl_line <= line;
    end process;
@@ -166,45 +201,60 @@ begin
    hr <= '1' when hcnt < left or hcnt >= right else '0';
    vr <= '1' when vcnt < top or vcnt >= bottom else '0';
 
-   process (clk) begin if rising_edge(clk) then
-      frame_o <= '0';
-      irq_v_o <= '0';
-      irq_h_o <= '0';
+   process (clk)
+      variable m : dmode_t;
+   begin
+      if rising_edge(clk) then
+         frame_o <= '0';
+         irq_v_o <= '0';
+         irq_h_o <= '0';
 
-      if hcnt = H_TOTAL - 1 then
-         hcnt <= (others => '0');
-         mode <= dmode_of(regs(R_SCRMODE0), mcs);
-         if (pal_f = '1' and vcnt = 312) or (pal_f = '0' and vcnt = 261) then
-            vcnt      <= (others => '0');
-            frame_o   <= '1';
-            pal_f     <= regs(R_SCRMODE1)(3);
-            il_f      <= regs(R_SCRMODE1)(1);
-            disp_en_f <= regs(R_CONTROL)(7);
-            os_f      <= is_overscan(dmode_of(regs(R_SCRMODE0), mcs));
-         else
-            vcnt <= vcnt + 1;
-            if vcnt + 1 = bottom then
-               irq_v_o <= '1';
+         if hcnt = line_len - 1 then
+            hcnt <= (others => '0');
+            m := hs_mode_of(regs(R_SCRMODE0), regs(R_SCRMODE1), mcs);
+            if last_line then
+               vcnt      <= (others => '0');
+               frame_o   <= '1';
+               disp_en_f <= regs(R_CONTROL)(7);
+               mode      <= m;
+               if is_highscan(m) then
+                  pal_f <= '0';
+                  il_f  <= '0';
+                  os_f  <= false;
+               else
+                  pal_f <= regs(R_SCRMODE1)(3);
+                  il_f  <= regs(R_SCRMODE1)(1);
+                  os_f  <= is_overscan(m);
+               end if;
+            else
+               -- B5 / B6 for the whole frame, the other modes by line.
+               if not is_highscan(mode) then
+                  mode <= dmode_of(regs(R_SCRMODE0), mcs);
+               end if;
+               vcnt <= vcnt + 1;
+               if vcnt + 1 = bottom then
+                  irq_v_o <= '1';
+               end if;
             end if;
+         else
+            hcnt <= hcnt + 1;
          end if;
-      else
-         hcnt <= hcnt + 1;
-      end if;
 
-      if hcnt = hl_x and (regs(R_INT2)(7) = '1' or resize(vcnt, 11) = hl_line) then
-         irq_h_o <= '1';
-      end if;
+         if hcnt = hl_x and (regs(R_INT2)(7) = '1' or resize(vcnt, 11) = hl_line) then
+            irq_h_o <= '1';
+         end if;
 
-      if reset_n = '0' then
-         hcnt      <= (others => '0');
-         vcnt      <= (others => '0');
-         pal_f     <= '0';
-         il_f      <= '0';
-         disp_en_f <= '0';
-         os_f      <= false;
-         mode      <= DM_P1;
+         if reset_n = '0' then
+            hcnt      <= (others => '0');
+            vcnt      <= (others => '0');
+            pal_f     <= '0';
+            il_f      <= '0';
+            disp_en_f <= '0';
+            os_f      <= false;
+            mode      <= DM_P1;
+         end if;
       end if;
-   end if; end process;
+   end process;
 
    hcnt_o      <= hcnt;
    vcnt_o      <= vcnt;
@@ -217,21 +267,23 @@ begin
    bottom_o    <= bottom;
    disp_en_o   <= disp_en_f;
    pal_o       <= pal_f;
-   last_line_o <= '1' when (pal_f = '1' and vcnt = 312) or (pal_f = '0' and vcnt = 261) else '0';
+   last_line_o <= '1' when last_line else '0';
    interlace_o <= il_f;
 
    -- Video signals: the picture is the display area and the border; the
    -- overscan modes have no border, the picture is the display area
-   -- (moved by R#16 like openMSX shows it).
-   hblank_o  <= hr when is_overscan(mode) else
+   -- (moved by R#16 like openMSX shows it); B5 / B6 have no border either.
+   hblank_o  <= hr when is_overscan(mode) or is_highscan(mode) else
                 '1' when hcnt < H_BLANK or hcnt >= H_BLANK + 2 * H_BORDER + H_DISPLAY else
                 '0';
-   vblank_o  <= vr when os_f else
+   vblank_o  <= vr when os_f or is_highscan(mode) else
                 '1' when vcnt < V_BLANK
                       or (pal_f = '0' and vcnt >= V_BLANK + 2 * V_BORDER_NTSC + V_DISPLAY)
                       or (pal_f = '1' and vcnt >= V_BLANK + 2 * V_BORDER_PAL + V_DISPLAY) else
                 '0';
-   hsync_n_o <= '0' when hcnt < 200 else '1';
-   vsync_n_o <= '0' when vcnt < 3 else '1';
+   hsync_n_o <= '0' when hcnt < sync_len else '1';
+   vsync_n_o <= '0' when (mode = DM_B5 and vcnt < V_SYNC_B5)
+                      or (mode = DM_B6 and vcnt < V_SYNC_B6)
+                      or (not is_highscan(mode) and vcnt < 3) else '1';
 
 end rtl;

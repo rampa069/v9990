@@ -99,9 +99,14 @@ package v9990_pkg is
 
    -- Display modes (openMSX V9990DisplayMode): R#6 DSPM / DCKM and P#7 MCS.
    -- B0, B2, B4 are the overscan modes (MCS = 1: no border, 240 lines).
-   type dmode_t is (DM_P1, DM_P2, DM_B0, DM_B1, DM_B2, DM_B3, DM_B4, DM_B7);
+   -- B5, B6 are the high scan modes (R#7 HSCN, V9990 Application Manual
+   -- 8.3): the B7 setting (bitmap, DCKM 2, MCS 0) with HSCN, B6 with C25M;
+   -- dmode_of gives B7 for them, hs_mode_of the high scan mode.
+   type dmode_t is (DM_P1, DM_P2, DM_B0, DM_B1, DM_B2, DM_B3, DM_B4, DM_B7, DM_B5, DM_B6);
    function dmode_of(scrmode0 : byte_t; mcs : std_logic) return dmode_t;
+   function hs_mode_of(scrmode0, scrmode1 : byte_t; mcs : std_logic) return dmode_t;
    function is_overscan(m : dmode_t) return boolean;
+   function is_highscan(m : dmode_t) return boolean;
    function is_bitmap(m : dmode_t) return boolean;
    function pixel_clocks(m : dmode_t) return natural;   -- clocks per pixel
    function pixels(m : dmode_t) return natural;         -- pixels per line
@@ -119,6 +124,32 @@ package v9990_pkg is
    constant V_DISPLAY     : natural := 212;
    constant V_DISPLAY_OS_NTSC : natural := 240;
    constant V_DISPLAY_OS_PAL  : natural := 290;
+
+   -- High scan (Application Manual 13.3.12 / 13.3.13), no border, sync at
+   -- the start of the line / frame:
+   --   B5  21.48 MHz dots, line 848 dots: sync 64, left erase 80, display
+   --       640, right erase 64; frame 440 lines: sync 8, top erase 25,
+   --       display 400, bottom erase 7
+   --   B6  25.175 MHz dots, line 31.78 us = 1365 clocks: sync 3.81 us,
+   --       left erase 1.91 us, display 25.42 us (640 dots of 273 / 160
+   --       clocks), right erase 0.64 us; frame 525 lines: sync 2, top
+   --       erase 33, display 480, bottom erase 10
+   constant H_TOTAL_B5    : natural := 1696;
+   constant H_SYNC_B5     : natural := 128;
+   constant H_LEFT_B5     : natural := 288;
+   constant H_DISPLAY_B5  : natural := 1280;
+   constant V_TOTAL_B5    : natural := 440;
+   constant V_SYNC_B5     : natural := 8;
+   constant V_TOP_B5      : natural := 33;
+   constant V_DISPLAY_B5  : natural := 400;
+   constant H_TOTAL_B6    : natural := 1365;
+   constant H_SYNC_B6     : natural := 164;
+   constant H_LEFT_B6     : natural := 246;
+   constant H_DISPLAY_B6  : natural := 1092;
+   constant V_TOTAL_B6    : natural := 525;
+   constant V_SYNC_B6     : natural := 2;
+   constant V_TOP_B6      : natural := 35;
+   constant V_DISPLAY_B6  : natural := 480;
 
    type vmap_t is (MAP_P1, MAP_P2, MAP_BX);
    function vmap_of(scrmode0 : byte_t) return vmap_t;
@@ -184,9 +215,26 @@ package body v9990_pkg is
       end case;
    end function;
 
+   function hs_mode_of(scrmode0, scrmode1 : byte_t; mcs : std_logic) return dmode_t is
+   begin
+      if dmode_of(scrmode0, mcs) = DM_B7 and scrmode1(0) = '1' then
+         if scrmode1(6) = '1' then
+            return DM_B6;
+         else
+            return DM_B5;
+         end if;
+      end if;
+      return dmode_of(scrmode0, mcs);
+   end function;
+
    function is_overscan(m : dmode_t) return boolean is
    begin
       return m = DM_B0 or m = DM_B2 or m = DM_B4;
+   end function;
+
+   function is_highscan(m : dmode_t) return boolean is
+   begin
+      return m = DM_B5 or m = DM_B6;
    end function;
 
    function is_bitmap(m : dmode_t) return boolean is
@@ -202,7 +250,7 @@ package body v9990_pkg is
          when DM_B2 => return 6;
          when DM_B3 | DM_P2 => return 4;
          when DM_B4 => return 3;
-         when DM_B7 => return 2;
+         when DM_B7 | DM_B5 | DM_B6 => return 2;   -- B6: 273 / 160 really (v9990_bitmap)
       end case;
    end function;
 
@@ -216,6 +264,7 @@ package body v9990_pkg is
          when DM_B3 | DM_P2 => return 512;
          when DM_B4 => return 768;       -- 2304 / 3
          when DM_B7 => return 1024;
+         when DM_B5 | DM_B6 => return 640;
       end case;
    end function;
 
