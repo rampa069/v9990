@@ -62,7 +62,11 @@ def test(runner, test_module, testcase=None):
                     "VRAM_LAT": int(os.environ.get("V9990_VRAM_LAT", "0")),
                     "VRAM_GAP": int(os.environ.get("V9990_VRAM_GAP", "0")),
                     # V9990_VRAM_CACHE=4: v9990_vram_cache with 4 lines in front
-                    "VRAM_CACHE": int(os.environ.get("V9990_VRAM_CACHE", "0"))},
+                    "VRAM_CACHE": int(os.environ.get("V9990_VRAM_CACHE", "0")),
+                    # V9990_VRAM_SLOT=8: a request taken only every 8 clocks
+                    # (the vdp slots of the 1st SDRAM of ZEMMIX), acked
+                    # V9990_VRAM_LAT clocks after its slot
+                    "VRAM_SLOT": int(os.environ.get("V9990_VRAM_SLOT", "0"))},
         extra_env={"V9990_CAPTURE_DIR": str(capture_dir)},
         # The IEEE packages warn about 'U' operands before reset.
         test_args=["--ieee-warnings=off"],

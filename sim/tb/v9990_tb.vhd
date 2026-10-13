@@ -27,7 +27,11 @@ entity v9990_tb is
       -- VRAM_CACHE lines of v9990_vram_cache between the core and the slow
       -- memory (0: none), which then reads lines of 4 words: VRAM_LAT
       -- clocks from the request to the ack for a line too.
-      VRAM_CACHE     : natural := 0
+      VRAM_CACHE     : natural := 0;
+      -- VRAM_SLOT > 0: the memory takes a request only every VRAM_SLOT
+      -- clocks (a slot of the SDRAM shared with a CPU, ZEMMIX 1st SDRAM: 8),
+      -- acked VRAM_LAT clocks after its slot (VRAM_GAP is not used).
+      VRAM_SLOT      : natural := 0
    );
    port (
       clk_o          : out std_logic;
@@ -204,6 +208,7 @@ begin
       variable line : boolean := false;
       variable cnt  : natural := 0;
       variable gap  : natural := 0;
+      variable slot : natural := 0;
    begin
       if not init then
          -- as v9990_vram_bram at power on
@@ -229,6 +234,10 @@ begin
          end if;
          if cnt > 0 then
             cnt := cnt - 1;
+         end if;
+         if VRAM_SLOT > 0 then
+            slot := (slot + 1) mod VRAM_SLOT;
+            gap  := 0 when slot = 0 else 1;
          end if;
          if busy then
             if s_req = '1' then
