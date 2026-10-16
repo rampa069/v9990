@@ -219,12 +219,19 @@ begin
          reqs := c0_req & c1_req & c2_req & c3_req & c4_req;
          cur  := reqs(gnt);
          if vram_ack_i = '1' or cur = '0' then
-            for k in 1 to 4 loop
-               if reqs((gnt + k) mod 5) = '1' then
-                  gnt <= (gnt + k) mod 5;
-                  exit;
-               end if;
-            end loop;
+            if c1_req = '1' then
+               -- the bitmap fetch (the next display line) goes first: with a
+               -- slow VRAM (an SDRAM shared by slots) the round robin can
+               -- leave it late behind the command engine and the CPU
+               gnt <= 1;
+            else
+               for k in 1 to 4 loop
+                  if reqs((gnt + k) mod 5) = '1' then
+                     gnt <= (gnt + k) mod 5;
+                     exit;
+                  end if;
+               end loop;
+            end if;
          end if;
          if reset_n = '0' then
             gnt <= 0;
